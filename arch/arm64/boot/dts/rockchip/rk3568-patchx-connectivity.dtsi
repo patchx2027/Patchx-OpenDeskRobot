@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/* SDIO Wi-Fi wiring; firmware is supplied separately. */
+#include <dt-bindings/clock/rockchip,rk808.h>
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+    sdio_pwrseq: sdio-pwrseq {
+        compatible = "mmc-pwrseq-simple";
+        clocks = <&rk809 RK808_CLKOUT1>;
+        clock-names = "ext_clock";
+        pinctrl-names = "default";
+        pinctrl-0 = <&wifi_enable>;
+        reset-gpios = <&gpio2 RK_PB1 GPIO_ACTIVE_LOW>;
+        post-power-on-delay-ms = <400>;
+        power-off-delay-us = <500000>;
+    };
+
+    wireless_wlan: wireless-wlan {
+        compatible = "wlan-platdata";
+        /* Preserve the observed DT string; actual OTP identifies the firmware. */
+        wifi_chip_type = "ap6398s";
+        WIFI,host_wake_irq = <&gpio2 RK_PB2 GPIO_ACTIVE_HIGH>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&wifi_host_wake_irq>;
+        status = "okay";
+    };
+};
+
+&sdmmc1 {
+    bus-width = <4>;
+    supports-sdio;
+    cap-sd-highspeed;
+    cap-sdio-irq;
+    non-removable;
+    keep-power-in-suspend;
+    sd-uhs-sdr104;
+    max-frequency = <150000000>;
+    mmc-pwrseq = <&sdio_pwrseq>;
+    pinctrl-names = "default";
+    pinctrl-0 = <&sdmmc1_bus4 &sdmmc1_cmd &sdmmc1_clk>;
+    status = "okay";
+};
+
+&pinctrl {
+    wifi {
+        wifi_enable: wifi-enable {
+            rockchip,pins = <2 RK_PB1 RK_FUNC_GPIO &pcfg_pull_none>;
+        };
+        wifi_host_wake_irq: wifi-host-wake-irq {
+            rockchip,pins = <2 RK_PB2 RK_FUNC_GPIO &pcfg_pull_up>;
+        };
+    };
+};
+
+/* RNG interface used by the Linux profile. */
+&rng {
+    status = "okay";
+};
+
+/* UART0 enumeration is retained; this does not define a motor protocol. */
+&uart0 {
+    status = "okay";
+};

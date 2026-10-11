@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * PatchX 3568A / AIoT-3568PQ, Linux 5.10.160.
+ * Board descriptions reconstructed on the SDK rk3568.dtsi, with the
+ * screen/audio configuration used in the 2026-10-11 RAM trial.
+ * This is a Linux board source, not the Android 4.19 runtime export.
+ */
+/dts-v1/;
+
+/* Preserve the tested boot allocation layout, not a general loader ABI. */
+/memreserve/ 0x0a100000 0x25000;
+/memreserve/ 0x0a200000 0xc8c20;
+
+#include "rk3568.dtsi"
+#include "rk3568-patchx-power.dtsi"
+#include "rk3568-patchx-base.dtsi"
+#include "rk3568-patchx-connectivity.dtsi"
+#include "rk3568-patchx-audio.dtsi"
+#include "rk3568-patchx-display.dtsi"
+#include "rk3568-patchx-panel-init.dtsi"
+
+/* Stable reference values for the tested pre-overlay tree. */
+#include "rk3568-patchx-phandles.dtsi"

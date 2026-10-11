@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/* RK809 + I2S1 connection for the checked 48 kHz, stereo S16_LE profile.
+ * The paired property selects the matching CPU/codec driver contract.
+ */
+
+/ {
+    rk809-sound {
+        status = "okay";
+        compatible = "simple-audio-card";
+        simple-audio-card,format = "i2s";
+        simple-audio-card,name = "rockchip,rk809-codec";
+        simple-audio-card,mclk-fs = <256>;
+
+        /* This BSP codec uses path controls, without the old DAPM widgets. */
+        simple-audio-card,cpu {
+            sound-dai = <&i2s1_8ch>;
+        };
+        simple-audio-card,codec {
+            sound-dai = <&rk809_codec>;
+        };
+    };
+};
+
+&rk809 {
+    rk809_codec: codec {
+        #sound-dai-cells = <0>;
+        rockchip,checked-shared-params-48k;
+        compatible = "rockchip,rk809-codec", "rockchip,rk817-codec";
+        clocks = <&cru I2S1_MCLKOUT>;
+        clock-names = "mclk";
+        assigned-clocks = <&cru I2S1_MCLKOUT>, <&cru I2S1_MCLK_TX_IOE>;
+        assigned-clock-rates = <12288000>;
+        assigned-clock-parents = <&cru I2S1_MCLKOUT_TX>, <&cru I2S1_MCLKOUT_TX>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&i2s1m0_mclk>;
+        hp-volume = <30>;
+        spk-volume = <12>;
+        spk-ctl-gpios = <&gpio4 RK_PC4 GPIO_ACTIVE_LOW>;
+        mic-in-differential;
+        status = "okay";
+    };
+};
+
+&i2s1_8ch {
+    rockchip,checked-shared-params-48k;
+    status = "okay";
+    rockchip,clk-trcm = <1>;
+    pinctrl-0 = <&i2s1m0_sclktx &i2s1m0_lrcktx &i2s1m0_sdi0 &i2s1m0_sdo0>;
+};
+
+/* Original Android groups use bias-disable without a Schmitt property. */
+&i2s1m0_mclk {
+    rockchip,pins = <1 RK_PA2 1 &pcfg_pull_none>;
+};
+
+&i2s1m0_sclktx {
+    rockchip,pins = <1 RK_PA3 1 &pcfg_pull_none>;
+};
+
+&i2s1m0_lrcktx {
+    rockchip,pins = <1 RK_PA5 1 &pcfg_pull_none>;
+};

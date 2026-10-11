@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/* Memory, boot console, storage and USB for the tested Linux RAM profile. */
+
+
+
+/ {
+    model = "3568A Linux reconstruction - Wi-Fi candidate";
+    compatible = "rockchip,rk3568-evb1-ddr4-v10", "rockchip,rk3568";
+
+    /* Preserve the observed holes and high remap, not a guessed contiguous 4GB.
+     * Bootloader memory fixups and Image/initramfs addresses still need review.
+     * Zero-length padding entries from the running FDT have been omitted.
+     */
+    memory@200000 {
+        device_type = "memory";
+        reg = <0x0 0x00200000 0x0 0x08200000>,
+              <0x0 0x09400000 0x0 0xe6c00000>,
+              <0x1 0xf0000000 0x0 0x10000000>;
+    };
+
+    reserved-memory {
+        /* The original high remap is a protected buffer, not usable CPU RAM. */
+        buffer@1f0000000 {
+            reg = <0x1 0xf0000000 0x0 0x10000000>;
+            no-map;
+        };
+    };
+
+    aliases {
+        mmc0 = &sdhci;
+    };
+
+    chosen: chosen {
+        /* Supplied initramfs /init must mount proc/sys/dev explicitly.
+         * No Android partition is selected as root. No initramfs is built here.
+         */
+        bootargs = "earlycon=uart8250,mmio32,0xfe660000 console=ttyFIQ0 rdinit=/init ro";
+    };
+
+    fiq_debugger: fiq-debugger {
+        compatible = "rockchip,fiq-debugger";
+        rockchip,serial-id = <2>;
+        rockchip,wake-irq = <0>;
+        rockchip,irq-mode-enable = <1>;
+        rockchip,baudrate = <1500000>;
+        interrupts = <GIC_SPI 252 IRQ_TYPE_LEVEL_LOW>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&uart2m0_xfer>;
+        status = "okay";
+    };
+};
+
+/* Preserve the tested loader allocation layout. Display does not map its logo. */
+&drm_logo {
+    reg = <0x0 0xedf00000 0x0 0x002f7b00>;
+};
+
+&drm_cubic_lut {
+    reg = <0x0 0xeff00000 0x0 0x00008000>;
+};
+
+&sdhci {
+    bus-width = <8>;
+    non-removable;
+    no-sd;
+    no-sdio;
+    /* Target dwcmshc driver clears HS200/HS400/DDR capabilities at <=52MHz. */
+    max-frequency = <52000000>;
+    status = "okay";
+};
+
+/* Both Android USB2 host controllers were enumerated. No inferred power GPIO. */
+&usb2phy0 { status = "okay"; };
+&usb2phy1 { status = "okay"; };
+&u2phy0_host {
+    phy-supply = <&vcc5v0_host>;
+    status = "okay";
+};
+&u2phy1_host {
+    phy-supply = <&vcc5v0_host>;
+    status = "okay";
+};
+&usb_host0_ehci { status = "okay"; };
+&usb_host0_ohci { status = "okay"; };
+&usb_host1_ehci { status = "okay"; };
+&usb_host1_ohci { status = "okay"; };
+
+&tsadc { status = "okay"; };
+
+/* Do not activate unreviewed voltage/frequency, actuator, or peripheral paths. */
+&dmc { status = "disabled"; };
+&rockchip_suspend { status = "disabled"; };
+&uart0 { status = "disabled"; };
+&uart2 { status = "disabled"; }; /* Owned by fiq-debugger, not 8250. */
+&sdmmc0 { status = "disabled"; };
+&sdmmc1 { status = "disabled"; };
+&sdmmc2 { status = "disabled"; };
+&gpu { status = "disabled"; };
+&rknpu { status = "disabled"; };
+&mipi_csi2_hw { status = "disabled"; };
+&display_subsystem { status = "disabled"; };

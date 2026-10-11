@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "upstream": {
+    "repository": "https://github.com/orangepi-xunlong/linux-orangepi.git",
+    "commit": "9f9e9d18574d0914c0d192a90c3babfe1fd63c95",
+    "tree": "11bcfddc17aef03ccbd4a595e65e09674e54c985",
+    "import": "complete tracked-source snapshot; original licenses retained"
+  },
+  "kernel_version": "5.10.160-rt89",
+  "integrated_source_sha256": {
+    "arch/arm64/include/asm/cache.h": "918c8ff20005ae6f666a9d6bcc1cdf17c71d946a0d9e3e389a9f72e244aeeacc",
+    "drivers/dma/dmaengine.c": "aaa80478ef17893ba829b1190a09e003d534a5b3ec923a652145549f0947e7c8",
+    "drivers/dma/pl330.c": "b71fd04e0cee0745cc30ea03263e965574ac8ef0a2c29a5dc9eb4a38c5eccd62",
+    "drivers/gpu/drm/panel/panel-simple.c": "894f460c36d0da16104fdadccb56d03fc2df51462241fb93dc2bf254ca759ab5",
+    "drivers/input/sensors/accel/mxc6655xa.c": "30e51b7e778f0f8750708a22db5428101bb47b58aeefd60ca205304da24e1d3d",
+    "drivers/input/sensors/sensor-dev.c": "e16ad49119e955947e4ec41f9b2ca3d0b742fa87723f5d4ff894dcbeb2f4d848",
+    "drivers/input/sensors/sensor-i2c.c": "2cb66ecbee8b4f8a3d1b53b3acfd5f375512f171f3239193ebe76e18902af9e0",
+    "drivers/mfd/rk808.c": "753e6282f474e833d0327e7e715b323a9682f7ff341355ca78f04959cc5f8586",
+    "drivers/net/wireless/rockchip_wlan/rkwifi/bcmdhd/Makefile": "2594bc413b5fef8be6ede288d30934774a0b558896daa7ea40f660bcb64de378",
+    "include/linux/dmaengine.h": "655ac566d6bcb49c1cfb0d6db52af174dfc49e6ba887a23d4b89cbed6c339133",
+    "include/sound/dmaengine_pcm.h": "f7fe7ae1130bf04adc7fb92f14cbb75b94aaf08dd3a658da66eb5d3184954fc2",
+    "include/sound/pcm.h": "269a4163d108f4b0f4aaedc66f43b60895b02ae4bb4ed7b07c9f5f54723ca234",
+    "include/sound/soc-dai.h": "89410560ed706380ad4cfb6aec57911840f811bb10bd1c2c16a1cc8c14bbcbe4",
+    "include/sound/soc.h": "3295e7fdadef22c64ca2e30623694fec90faef3d706e69844132cfec47ad76d0",
+    "kernel/printk/printk.c": "2f2a3005827c128e3db587c9d3643e16b4cdce000a20ad21aaa57b68a7381624",
+    "sound/core/pcm.c": "bcd3497f05f9a5850c2a32a0ce41aa1e79ad326f08241db5d070e314b56defe1",
+    "sound/core/pcm_dmaengine.c": "189e4e4fb59a683ae050e96fbe90f7fc09d5ad7afe755d3eca6623fbb971da77",
+    "sound/core/pcm_memory.c": "cb883d943072d36c8b3d7f881f89b641c683597412014fcb7fe391f30cf0d4f4",
+    "sound/core/pcm_native.c": "bc34db0aabe8b523172403a4095afeac5544434e15a05884ca99f6b77d48c47d",
+    "sound/soc/codecs/rk817_codec.c": "7dea894bf067486a5fe0a3a8f1a241bdabebef3327a1bf732044b8bba8f2bcdf",
+    "sound/soc/generic/simple-card-utils.c": "1cc6583e7573809ecc2c7df0602a27d9404c9d59adfee083a73f706ef76f65c4",
+    "sound/soc/rockchip/rockchip_i2s_tdm.c": "b987171f222e3644a2df9a95499ee55d2bccd54770d6f5a4dd89f7f944aabe25",
+    "sound/soc/soc-component.c": "ea81b958a6cdf035a29de112e07f15f55f774d4f67a02b68ca1eae6c0ce5d85c",
+    "sound/soc/soc-compress.c": "d9a1b4de08206c232ccfef37a85a25f65053ebb7a7b2bbcd36cff2c22a918bc8",
+    "sound/soc/soc-core.c": "662098c11fffd17926835c31823294fa8593aabc10e7eb1db4d89058b904232b",
+    "sound/soc/soc-dai.c": "fc15c8017a52c71c4f25172c5078a35e387d785268e81eb39c6ead1b83a0497d",
+    "sound/soc/soc-generic-dmaengine-pcm.c": "794bccb85fde6094cbd3b1dcaf8f3d5bce6ae5c4c342047658c2934525b6724c",
+    "sound/soc/soc-pcm.c": "5bae1c377b848238b5f75a18fcbb17a924064898cc9638489f866987db252586"
+  },
+  "config": {
+    "path": "arch/arm64/configs/patchx_rk3568.config",
+    "sha256": "1268f3061ecf94e063d8785010a793cc7edaaf0d61d29d6c29887a9dccfed912"
+  },
+  "device_tree": {
+    "entry": "arch/arm64/boot/dts/rockchip/rk3568-patchx.dts",
+    "reference_dtb_sha256": "98595cf813d7755de52ad0b35867f154f5fa0ab6b0309064fe2ef4e4b281bb33",
+    "semantic_comparison": {
+      "equal": true,
+      "nodes": 972,
+      "properties": 4946,
+      "metadata_equal": true
+    },
+    "source_files": {
+      "rk3568-patchx-audio.dtsi": {
+        "bytes": 1838,
+        "sha256": "0b4f4a3d1a3f30682e3a82fe0498df1f36cfbb0ec80e5c7294957df661800bbc",
+        "lines": 62
+      },
+      "rk3568-patchx-base.dtsi": {
+        "bytes": 3047,
+        "sha256": "f55c0a7529010b4669afcce41d7881efb12f1ca57310a9a166418eccb32882a2",
+        "lines": 101
+      },
+      "rk3568-patchx-connectivity.dtsi": {
+        "bytes": 1717,
+        "sha256": "e023d68b586bca236fa518c21b3e46ed70690db1965dec59a4c32e17a1461f50",
+        "lines": 63
+      },
+      "rk3568-patchx-display.dtsi": {
+        "bytes": 4554,
+        "sha256": "f930dfba66251f9253386721d8a178de96b583e2a60a613b52cec9d4087a5065",
+        "lines": 125
+      },
+      "rk3568-patchx-panel-init.dtsi": {
+        "bytes": 4436,
+        "sha256": "bee287b6cd88911f091357a5958833f7959438480822fb7da6225660e88962c5",
+        "lines": 189
+      },
+      "rk3568-patchx-phandles.dtsi": {
+        "bytes": 29097,
+        "sha256": "c5e97f9668b67c96e48cd2b9bbcf77ce193789c18b3e7fe77067ecd9d19b258f",
+        "lines": 776
+      },
+      "rk3568-patchx-power.dtsi": {
+        "bytes": 11650,
+        "sha256": "03fb8f69c5fe83cde9628cfaff10a30221a6005449b251c89051f70bea659ee8",
+        "lines": 343
+      },
+      "rk3568-patchx.dts": {
+        "bytes": 812,
+        "sha256": "70631633219f27f2f18aae9b7a908bd935b0919104b03e8e48569c5b15b2bf63",
+        "lines": 23
+      }
+    }
+  },
+  "scope": "Source matches the audio-v5 kernel inputs. Board observations and their configurations are documented separately in VALIDATION.md."
+}

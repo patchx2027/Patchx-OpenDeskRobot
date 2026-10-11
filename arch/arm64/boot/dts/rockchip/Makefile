@@ -14,3 +14,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-orangepi-3b-v2.dtb
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-orangepi-4-lts.dtb
 
 subdir-y := $(dts-dirs) overlay
+
+# PatchX RK3568 board; retain symbols for the matching boot overlay.
+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3568-patchx.dtb
+DTC_FLAGS_rk3568-patchx += -@
