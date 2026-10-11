@@ -2,7 +2,7 @@
 
 PatchX 桌面机器人开源项目，面向语音交互、角色表现、视觉处理和设备控制的开发与交流。
 
-目前公开的是 **Android 应用源码发布版（source release）**。代码位于 [`software/android/`](software/android/README.md)，选取原工程的 1.0.1 版本作为维护入口。当前缺少 Unity 工程和部分第三方输入，尚不能仅凭本仓库构建完整 APK；不提供 Android 系统镜像或电机控制器固件。
+目前公开的是 **Android 应用源码发布版（source release）**。代码位于 [`software/android/`](software/android/README.md)。当前缺少 Unity 工程和部分第三方输入，尚不能仅凭本仓库构建完整 APK；不提供 Android 系统镜像或电机控制器固件。
 
 ## 开始阅读
 
