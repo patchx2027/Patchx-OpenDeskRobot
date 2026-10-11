@@ -7,6 +7,7 @@ PatchX 桌面机器人开源项目，面向语音交互、角色表现、视觉�
 ## 开始阅读
 
 - [Android 工程说明与构建准备](software/android/README.md)
+- [RK3568 设备树](hardware/rk3568/device-tree/README.md)
 - [第三方依赖与待补输入](software/android/docs/THIRD_PARTY.md)
 - [发布范围、来源与验证状态](software/android/docs/RELEASE_STATUS.md)
 
@@ -14,6 +15,7 @@ PatchX 桌面机器人开源项目，面向语音交互、角色表现、视觉�
 
 ```text
 software/android/     Android 应用源码、资源与构建配置
+hardware/rk3568/       RK3568 设备树与硬件说明
 LICENSE               第一方代码的 MIT 许可证
 qr-group.png          微信讨论群二维码
 ```

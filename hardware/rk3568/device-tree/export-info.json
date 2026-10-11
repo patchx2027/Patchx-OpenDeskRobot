@@ -1,0 +1,70 @@
+{
+  "board": {
+    "model": "3568A",
+    "soc": "Rockchip RK3568",
+    "board_family": "AIoT-3568PQ",
+    "system": "Android 11",
+    "kernel": "4.19.232"
+  },
+  "source": {
+    "type": "runtime FDT export",
+    "capture_date": "2026-10-07",
+    "bytes": 151680,
+    "sha256": "7438f8f456bedf09353c19be96127a79ca570a8e09b47c9e92e90829705c76cc"
+  },
+  "public_dts": {
+    "file": "rk3568-patchx-android.dts",
+    "sha256": "52a9ab3f7676ce2f5ec8a2bcee21cb2ac9517960b794f18f4af5c0237cd798ea"
+  },
+  "removed_properties": [
+    "/:serial-number",
+    "/chosen:bootargs",
+    "/chosen:linux,initrd-end",
+    "/chosen:linux,initrd-start",
+    "/ethernet@fe010000:local-mac-address",
+    "/ethernet@fe2a0000:local-mac-address",
+    "/firmware/android:maninfo",
+    "/firmware/android:userinfo",
+    "/shimetaos_property:boot_count",
+    "/shimetaos_property:cpuid",
+    "/shimetaos_property:serial",
+    "/smdt_os_param:cpuid"
+  ],
+  "removed_header_memory_reservations": 2,
+  "preserved_nodes": 760,
+  "source_properties": 4756,
+  "public_properties": 4744,
+  "all_retained_property_bytes_match_source": true,
+  "hardware_reserved_memory_nodes_preserved": true,
+  "original_dtc_roundtrip_semantics_match": true,
+  "dtc_version": "Version: DTC 1.6.0-g183df9e9",
+  "dtc_compile_exit": 0,
+  "dtc_warning_counts": {
+    "reg_format": 1,
+    "unit_address_vs_reg": 3,
+    "unit_address_format": 3,
+    "pci_device_reg": 1,
+    "pci_device_bus_num": 1,
+    "simple_bus_reg": 1,
+    "i2c_bus_reg": 1,
+    "spi_bus_reg": 1,
+    "unique_unit_address": 1,
+    "clocks_property": 357,
+    "cooling_device_property": 2,
+    "dmas_property": 38,
+    "io_channels_property": 2,
+    "iommus_property": 9,
+    "phys_property": 18,
+    "power_domains_property": 40,
+    "pwms_property": 2,
+    "resets_property": 76,
+    "sound_dai_property": 8,
+    "thermal_sensors_property": 2,
+    "gpios_property": 50,
+    "interrupt_provider": 5,
+    "graph_child_address": 7,
+    "graph_port": 1
+  },
+  "new_dtc_warning_categories_or_counts": false,
+  "deployment_or_boot_test_performed": false
+}
