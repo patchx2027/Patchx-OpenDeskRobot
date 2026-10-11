@@ -1,8 +1,8 @@
 # PatchX OpenDeskRobot
 
-PatchX 是一个桌面机器人项目。这里存放 Android 应用源码、RK3568 设备树和 Linux 驱动补丁。
+PatchX 是一个桌面机器人项目。`android` 分支提供 Android 应用源码和设备树参考，[`kernel` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/kernel)提供完整 Linux 内核源码。
 
-Linux 驱动按已验证功能发布，具体配置和实测结果见各目录说明。Android 代码位于 [`software/android/`](software/android/README.md)。当前缺少 Unity 工程和部分第三方输入，尚不能仅凭本仓库构建完整 APK；不提供 Android 系统镜像或电机控制器固件。
+Android 代码位于 [`software/android/`](software/android/README.md)。Linux 的功能、配置和实测结果见[内核说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/kernel/README.md)。
 
 ## 从哪里开始
 
@@ -12,10 +12,10 @@ Linux 驱动按已验证功能发布，具体配置和实测结果见各目录�
 | --- | --- | --- |
 | 了解 Android 应用如何组织 | [Android 工程说明](software/android/README.md) | 应用入口和对应功能的 Java 代码 |
 | 调整屏幕亮度、时序或硬件接线 | [设备树教程](hardware/rk3568/device-tree/GUIDE.md) | 教程对应的 `board/` 文件 |
-| 阅读或修改 Linux 驱动 | [驱动源码导航](hardware/rk3568/drivers/linux-5.10/README.md) | 按功能找到源码，再应用补丁、构建 |
+| 阅读或修改 Linux 驱动 | [驱动源码导航](hardware/rk3568/drivers/linux-5.10/README.md) | 进入 `kernel` 分支，按功能读源码和构建教程 |
 | 准备编译 Android 应用 | [构建前准备](software/android/README.md#构建前准备) | 先核对第三方依赖，再填写本地配置 |
 
-设备树参考使用 Android 4.19，驱动补丁使用 Linux 5.10。开始修改前，先确认自己使用的内核版本。
+本分支设备树参考使用 Android 4.19，`kernel` 分支使用 Linux 5.10。开始修改前，先确认自己使用的内核版本。
 
 ### 文档索引
 
@@ -30,7 +30,7 @@ Linux 驱动按已验证功能发布，具体配置和实测结果见各目录�
 
 ```text
 software/android/     Android 应用源码、资源与构建配置
-hardware/rk3568/       RK3568 设备树、Linux 驱动补丁与验证说明
+hardware/rk3568/       Android 设备树参考与 Linux 内核源码入口
 LICENSE               第一方代码的 MIT 许可证
 qr-group.png          微信讨论群二维码
 ```
