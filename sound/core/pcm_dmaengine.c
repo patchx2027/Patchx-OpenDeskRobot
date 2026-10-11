@@ -13,6 +13,9 @@
 #include <linux/init.h>
 #include <linux/dmaengine.h>
 #include <linux/slab.h>
+#include <linux/mutex.h>
+#include <linux/wait.h>
+#include <linux/kernel.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
@@ -25,7 +28,22 @@ struct dmaengine_pcm_runtime_data {
 	dma_cookie_t cookie;
 
 	unsigned int pos;
+	bool checked, exposed, quiescing, closing, go_failed;
+	int first_error;
+	void (*error_sink)(struct snd_pcm_substream *, int, void *);
+	void *error_sink_arg;
+	spinlock_t lifecycle_lock;
+	atomic_t operations;
+	wait_queue_head_t drain_wait;
+	struct mutex quiesce_mutex;
+	struct snd_pcm_dma_quarantine *quarantine;
+	struct snd_dma_buffer *owner_buffer;
+	struct snd_dma_buffer owner;
 };
+
+static int dmaengine_pcm_check_fault(struct snd_pcm_substream *substream);
+static void dmaengine_pcm_notify_fault(struct snd_pcm_substream *substream,
+				      int error, bool stop_xrun);
 
 static inline struct dmaengine_pcm_runtime_data *substream_to_prtd(
 	const struct snd_pcm_substream *substream)
@@ -131,6 +149,113 @@ void snd_dmaengine_pcm_set_config_from_dai_data(
 }
 EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_set_config_from_dai_data);
 
+static __noreturn void dmaengine_pcm_failstop(const char *reason)
+{
+	/* Allocation/software ownership cannot be handed back on this path. */
+	panic_timeout = 0;
+	panic("DMA PCM lifecycle fail-stop: %s", reason);
+}
+
+static int dmaengine_pcm_error(struct dmaengine_pcm_runtime_data *prtd, int ret)
+{
+	unsigned long flags;
+
+	if (!prtd->checked)
+		return ret;
+	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+	if (ret < 0 && !prtd->first_error)
+		prtd->first_error = ret;
+	ret = prtd->first_error;
+	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+	return ret;
+}
+
+static int dmaengine_pcm_operation_begin(struct dmaengine_pcm_runtime_data *prtd,
+					int cmd, bool stopping)
+{
+	unsigned long flags;
+	int ret = 0;
+
+	if (!prtd->checked)
+		return 0;
+	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+	if (prtd->closing || prtd->quiescing)
+		ret = prtd->first_error ? prtd->first_error : -EIO;
+	else if (!stopping && (prtd->first_error || prtd->go_failed))
+		ret = prtd->first_error ? prtd->first_error : -EIO;
+	else if (cmd == SNDRV_PCM_TRIGGER_START && prtd->exposed)
+		ret = -EBUSY;
+	if (!ret)
+		atomic_inc(&prtd->operations);
+	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+	return ret;
+}
+
+static void dmaengine_pcm_operation_end(struct dmaengine_pcm_runtime_data *prtd)
+{
+	if (prtd->checked) {
+		atomic_dec(&prtd->operations);
+		wake_up_all(&prtd->drain_wait);
+	}
+}
+
+int snd_dmaengine_pcm_quiesce(struct snd_pcm_substream *substream)
+{
+	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct snd_dma_buffer *buffer;
+	unsigned long flags;
+	int ret, first;
+
+	might_sleep();
+	if (!prtd)
+		return 0;
+	if (!prtd->checked)
+		return dmaengine_synchronize_checked(prtd->dma_chan);
+	/* PREPARE/HW_FREE may have no descriptor; close CPU admission first. */
+	dmaengine_pcm_check_fault(substream);
+	mutex_lock(&prtd->quiesce_mutex);
+	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+	prtd->quiescing = true;
+	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+	/* Atomic trigger callbacks never wait or acquire this process mutex. */
+	if (!wait_event_timeout(prtd->drain_wait, !atomic_read(&prtd->operations),
+				msecs_to_jiffies(500)))
+		dmaengine_pcm_failstop("trigger admission drain deadline");
+	/* A checked negative return means all old software callbacks are drained. */
+	ret = dmaengine_synchronize_checked(prtd->dma_chan);
+	first = dmaengine_pcm_error(prtd, ret);
+	if (ret < 0)
+		dmaengine_pcm_notify_fault(substream, ret, false);
+	if (prtd->exposed) {
+		buffer = runtime->dma_buffer_p;
+		if (buffer != prtd->owner_buffer || !buffer ||
+		    buffer->area != prtd->owner.area || buffer->addr != prtd->owner.addr ||
+		    buffer->bytes != prtd->owner.bytes || buffer->dev.type != prtd->owner.dev.type ||
+		    buffer->dev.dev != prtd->owner.dev.dev ||
+		    buffer->private_data != prtd->owner.private_data ||
+		    snd_pcm_dma_quarantine_check(substream, prtd->dma_chan->device->dev))
+			dmaengine_pcm_failstop("exposed allocation owner changed");
+		if (ret < 0 && snd_pcm_dma_quarantine(substream, prtd->quarantine,
+						     prtd->dma_chan->device->dev))
+			dmaengine_pcm_failstop("allocation ownership transfer failed");
+		prtd->exposed = false;
+		prtd->owner_buffer = NULL;
+		memset(&prtd->owner, 0, sizeof(prtd->owner));
+	}
+	/* Void GO reported only DMA_ERROR; keep a later exact checked errno first. */
+	if (!first && prtd->go_failed)
+		first = dmaengine_pcm_error(prtd, -EIO);
+	prtd->cookie = 0;
+	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+	if (!prtd->closing)
+		prtd->quiescing = false;
+	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+	mutex_unlock(&prtd->quiesce_mutex);
+	return first;
+}
+EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_quiesce);
+
 static void dmaengine_pcm_dma_complete(void *arg)
 {
 	unsigned int new_pos;
@@ -154,14 +279,105 @@ static void dmaengine_pcm_dma_complete(void *arg)
 	snd_pcm_period_elapsed(substream);
 }
 
+/* Called from atomic contexts. The binding is immutable from open to drain. */
+static void dmaengine_pcm_notify_fault(struct snd_pcm_substream *substream,
+				      int error, bool stop_xrun)
+{
+	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+	void (*sink)(struct snd_pcm_substream *, int, void *);
+	void *sink_arg;
+	unsigned long flags;
+
+	if (!prtd || !prtd->checked)
+		return;
+	error = dmaengine_pcm_error(prtd, error < 0 ? error : -EIO);
+	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+	sink = prtd->error_sink;
+	sink_arg = prtd->error_sink_arg;
+	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+	/* CPU admission/ticket failure precedes the ALSA state action. */
+	if (sink)
+		sink(substream, error, sink_arg);
+	/* Synchronous trigger/pointer callers may already own the stream lock. */
+	if (stop_xrun)
+		snd_pcm_stop_xrun(substream);
+}
+
+static int dmaengine_pcm_check_fault(struct snd_pcm_substream *substream)
+{
+	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+	int error;
+
+	if (!prtd || !prtd->checked)
+		return 0;
+	/* This accessor is cached, IRQ-safe and does not acquire PM or perform I/O. */
+	error = dmaengine_check_open(prtd->dma_chan);
+	if (error < 0) {
+		dmaengine_pcm_notify_fault(substream, error, false);
+		return dmaengine_pcm_error(prtd, error);
+	}
+	return dmaengine_pcm_error(prtd, 0);
+}
+
+static void dmaengine_pcm_dma_complete_result(void *arg,
+					    const struct dmaengine_result *result)
+{
+	struct snd_pcm_substream *substream = arg;
+	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+	int error;
+
+	if (!prtd || !prtd->checked)
+		return;
+	error = dmaengine_check_open(prtd->dma_chan);
+	if (error < 0 || (result && result->result != DMA_TRANS_NOERROR)) {
+		/* Preserve exact controller errno before the result-only -EIO fallback. */
+		dmaengine_pcm_notify_fault(substream, error < 0 ? error : -EIO, true);
+		return;
+	}
+	if (dmaengine_pcm_error(prtd, 0))
+		return;
+	dmaengine_pcm_dma_complete(arg);
+}
+
+int snd_dmaengine_pcm_set_error_sink(struct snd_pcm_substream *substream,
+		void (*sink)(struct snd_pcm_substream *, int, void *), void *arg)
+{
+	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+	unsigned long flags;
+	int ret = 0;
+
+	if (!prtd || !prtd->checked)
+		return sink ? -EOPNOTSUPP : 0;
+	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+	if (prtd->exposed || prtd->closing || prtd->quiescing || prtd->error_sink)
+		ret = -EBUSY;
+	else {
+		prtd->error_sink = sink;
+		prtd->error_sink_arg = arg;
+	}
+	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_set_error_sink);
+
 static int dmaengine_pcm_prepare_and_submit(struct snd_pcm_substream *substream)
 {
 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
 	struct dma_chan *chan = prtd->dma_chan;
 	struct dma_async_tx_descriptor *desc;
 	enum dma_transfer_direction direction;
-	unsigned long flags = DMA_CTRL_ACK;
+	unsigned long flags = DMA_CTRL_ACK, irqflags;
+	int ret;
 
+	prtd->cookie = 0;
+	ret = dmaengine_pcm_check_fault(substream);
+	if (ret)
+		return ret;
+	if (prtd->checked) {
+		ret = snd_pcm_dma_quarantine_check(substream, chan->device->dev);
+		if (ret)
+			return ret;
+	}
 	direction = snd_pcm_substream_to_dma_direction(substream);
 
 	if (!substream->runtime->no_period_wakeup)
@@ -173,12 +389,30 @@ static int dmaengine_pcm_prepare_and_submit(struct snd_pcm_substream *substream)
 		snd_pcm_lib_buffer_bytes(substream),
 		snd_pcm_lib_period_bytes(substream), direction, flags);
 
-	if (!desc)
-		return -ENOMEM;
+	if (!desc) {
+		ret = dmaengine_pcm_check_fault(substream);
+		return ret ? ret : -ENOMEM;
+	}
 
-	desc->callback = dmaengine_pcm_dma_complete;
+	if (prtd->checked)
+		desc->callback_result = dmaengine_pcm_dma_complete_result;
+	else
+		desc->callback = dmaengine_pcm_dma_complete;
 	desc->callback_param = substream;
 	prtd->cookie = dmaengine_submit(desc);
+	ret = dma_submit_error(prtd->cookie);
+	if (ret) {
+		int exact = dmaengine_pcm_check_fault(substream);
+
+		return exact ? exact : ret;
+	}
+	if (prtd->checked) {
+		spin_lock_irqsave(&prtd->lifecycle_lock, irqflags);
+		prtd->owner_buffer = substream->runtime->dma_buffer_p;
+		prtd->owner = *prtd->owner_buffer;
+		prtd->exposed = true;
+		spin_unlock_irqrestore(&prtd->lifecycle_lock, irqflags);
+	}
 
 	return 0;
 }
@@ -197,37 +431,84 @@ int snd_dmaengine_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
+	unsigned long flags;
+	bool stopping;
 	int ret;
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
-		ret = dmaengine_pcm_prepare_and_submit(substream);
-		if (ret)
-			return ret;
-		dma_async_issue_pending(prtd->dma_chan);
-		break;
-	case SNDRV_PCM_TRIGGER_RESUME:
-	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
-		dmaengine_resume(prtd->dma_chan);
-		break;
-	case SNDRV_PCM_TRIGGER_SUSPEND:
-		if (runtime->info & SNDRV_PCM_INFO_PAUSE)
-			dmaengine_pause(prtd->dma_chan);
-		else
-			dmaengine_terminate_async(prtd->dma_chan);
-		break;
-	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-		dmaengine_pause(prtd->dma_chan);
-		break;
 	case SNDRV_PCM_TRIGGER_STOP:
-		dmaengine_terminate_async(prtd->dma_chan);
+	case SNDRV_PCM_TRIGGER_RESUME:
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
 		break;
 	default:
 		return -EINVAL;
 	}
-
-	return 0;
+	stopping = cmd == SNDRV_PCM_TRIGGER_STOP ||
+		(cmd == SNDRV_PCM_TRIGGER_SUSPEND && !(runtime->info & SNDRV_PCM_INFO_PAUSE));
+	if (!stopping) {
+		ret = dmaengine_pcm_check_fault(substream);
+		if (ret)
+			return ret;
+	}
+	ret = dmaengine_pcm_operation_begin(prtd, cmd, stopping);
+	if (ret)
+		return ret;
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+		ret = dmaengine_pcm_prepare_and_submit(substream);
+		if (ret)
+			break;
+		ret = dmaengine_pcm_check_fault(substream);
+		if (ret)
+			break;
+		dma_async_issue_pending(prtd->dma_chan);
+		ret = dmaengine_pcm_check_fault(substream);
+		if (ret)
+			break;
+		if (prtd->checked && dmaengine_tx_status(prtd->dma_chan, prtd->cookie, NULL) == DMA_ERROR) {
+			spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+			prtd->go_failed = true;
+			spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+			ret = dmaengine_pcm_check_fault(substream);
+			if (!ret)
+				dmaengine_pcm_notify_fault(substream, -EIO, false);
+			dmaengine_pcm_operation_end(prtd);
+			return dmaengine_pcm_error(prtd, ret ? ret : -EIO);
+		}
+		break;
+	case SNDRV_PCM_TRIGGER_RESUME:
+	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+		ret = dmaengine_resume(prtd->dma_chan);
+		break;
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+		if (runtime->info & SNDRV_PCM_INFO_PAUSE)
+			ret = dmaengine_pause(prtd->dma_chan);
+		else
+			ret = dmaengine_terminate_async(prtd->dma_chan);
+		break;
+	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+		ret = dmaengine_pause(prtd->dma_chan);
+		break;
+	case SNDRV_PCM_TRIGGER_STOP:
+		ret = dmaengine_terminate_async(prtd->dma_chan);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+	/* Validation/prep NULL has no exact I/O errno; checked obtains it later. */
+	if (cmd == SNDRV_PCM_TRIGGER_START && ret < 0 && prtd->cookie >= 0) {
+		dmaengine_pcm_operation_end(prtd);
+		return ret;
+	}
+	ret = dmaengine_pcm_error(prtd, ret);
+	dmaengine_pcm_operation_end(prtd);
+	return ret;
 }
+
 EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_trigger);
 
 /**
@@ -240,6 +521,8 @@ EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_trigger);
 snd_pcm_uframes_t snd_dmaengine_pcm_pointer_no_residue(struct snd_pcm_substream *substream)
 {
 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+	if (dmaengine_pcm_check_fault(substream))
+		return SNDRV_PCM_POS_XRUN;
 	return bytes_to_frames(substream->runtime, prtd->pos);
 }
 EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_pointer_no_residue);
@@ -259,7 +542,13 @@ snd_pcm_uframes_t snd_dmaengine_pcm_pointer(struct snd_pcm_substream *substream)
 	unsigned int buf_size;
 	unsigned int pos = 0;
 
-	dmaengine_tx_status(prtd->dma_chan, prtd->cookie, &state);
+	if (dmaengine_pcm_check_fault(substream))
+		return SNDRV_PCM_POS_XRUN;
+	if (dmaengine_tx_status(prtd->dma_chan, prtd->cookie, &state) == DMA_ERROR && prtd->checked) {
+		if (!dmaengine_pcm_check_fault(substream))
+			dmaengine_pcm_notify_fault(substream, -EIO, false);
+		return SNDRV_PCM_POS_XRUN;
+	}
 	buf_size = snd_pcm_lib_buffer_bytes(substream);
 	if (state.residue > 0 && state.residue <= buf_size)
 		pos = buf_size - state.residue;
@@ -313,6 +602,10 @@ int snd_dmaengine_pcm_open(struct snd_pcm_substream *substream,
 	if (!chan)
 		return -ENXIO;
 
+	ret = dmaengine_check_open(chan);
+	if (ret < 0)
+		return ret;
+
 	ret = snd_pcm_hw_constraint_integer(substream->runtime,
 					    SNDRV_PCM_HW_PARAM_PERIODS);
 	if (ret < 0)
@@ -323,8 +616,22 @@ int snd_dmaengine_pcm_open(struct snd_pcm_substream *substream,
 		return -ENOMEM;
 
 	prtd->dma_chan = chan;
+	prtd->checked = !!chan->device->device_synchronize_checked;
+	spin_lock_init(&prtd->lifecycle_lock);
+	atomic_set(&prtd->operations, 0);
+	init_waitqueue_head(&prtd->drain_wait);
+	mutex_init(&prtd->quiesce_mutex);
+	if (prtd->checked) {
+		prtd->quarantine = snd_pcm_dma_quarantine_alloc();
+		if (!prtd->quarantine) {
+			kfree(prtd);
+			return -ENOMEM;
+		}
+	}
 
 	substream->runtime->private_data = prtd;
+	if (prtd->checked)
+		substream->runtime->dma_quiesce = snd_dmaengine_pcm_quiesce;
 
 	return 0;
 }
@@ -359,10 +666,23 @@ int snd_dmaengine_pcm_close(struct snd_pcm_substream *substream)
 {
 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
 
-	dmaengine_synchronize(prtd->dma_chan);
+	unsigned long flags;
+	int ret;
+
+	if (!prtd)
+		return 0;
+	if (prtd->checked) {
+		spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+		prtd->closing = true;
+		spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+	}
+	ret = snd_dmaengine_pcm_quiesce(substream);
+	substream->runtime->dma_quiesce = NULL;
+	substream->runtime->private_data = NULL;
+	snd_pcm_dma_quarantine_free(prtd->quarantine);
 	kfree(prtd);
 
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_close);
 
@@ -377,11 +697,26 @@ int snd_dmaengine_pcm_close_release_chan(struct snd_pcm_substream *substream)
 {
 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
 
-	dmaengine_synchronize(prtd->dma_chan);
+	unsigned long flags;
+	int ret;
+
+	if (!prtd)
+		return 0;
+	if (prtd->checked) {
+		spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+		prtd->closing = true;
+		spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
+	}
+	ret = snd_dmaengine_pcm_quiesce(substream);
+	if (prtd->checked && ret < 0)
+		dmaengine_pcm_failstop("channel owner cannot be released");
 	dma_release_channel(prtd->dma_chan);
+	substream->runtime->dma_quiesce = NULL;
+	substream->runtime->private_data = NULL;
+	snd_pcm_dma_quarantine_free(prtd->quarantine);
 	kfree(prtd);
 
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_close_release_chan);
 

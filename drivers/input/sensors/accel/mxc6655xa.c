@@ -55,17 +55,22 @@ static int sensor_active(struct i2c_client *client, int enable, int rate)
 	struct sensor_private_data *sensor =
 		(struct sensor_private_data *)i2c_get_clientdata(client);
 	int result = 0;
+	int ctrl_data;
 
-	sensor->ops->ctrl_data = sensor_read_reg(client, sensor->ops->ctrl_reg);
+	ctrl_data = sensor_read_reg(client, sensor->ops->ctrl_reg);
+	if (ctrl_data < 0)
+		return ctrl_data;
 	if (enable)
-		sensor->ops->ctrl_data &= ~MXC6655_POWER_DOWN;
+		ctrl_data &= ~MXC6655_POWER_DOWN;
 	else
-		sensor->ops->ctrl_data |= MXC6655_POWER_DOWN;
+		ctrl_data |= MXC6655_POWER_DOWN;
 
 	result = sensor_write_reg(client, sensor->ops->ctrl_reg,
-				  sensor->ops->ctrl_data);
+				  ctrl_data);
 	if (result)
 		dev_err(&client->dev, "%s:fail to active sensor\n", __func__);
+	else
+		sensor->ops->ctrl_data = ctrl_data;
 
 	pr_debug("%s:reg = 0x%x, reg_ctrl = 0x%x, enable= %d\n",
 		 __func__,
@@ -99,6 +104,8 @@ static int sensor_init(struct i2c_client *client)
 
 	/* Enable or Disable for DRDY Interrupt */
 	status = sensor_read_reg(client, MXC6655_INT_MASK1);
+	if (status < 0)
+		return status;
 	if (sensor->pdata->irq_enable)
 		status |= MXC6655_INT_ENABLE;
 	else

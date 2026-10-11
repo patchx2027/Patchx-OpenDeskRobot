@@ -154,6 +154,15 @@ dmaengine_pcm_set_runtime_hwparams(struct snd_soc_component *component,
 	return snd_soc_set_runtime_hwparams(substream, &hw);
 }
 
+static void dmaengine_pcm_cpu_fault(struct snd_pcm_substream *substream,
+				   int first_error, void *arg)
+{
+	struct snd_soc_dai *cpu_dai = arg;
+
+	/* CPU-only optional contract: atomic, no codec callbacks or sleeping. */
+	cpu_dai->driver->ops->pcm_async_fault(cpu_dai, first_error);
+}
+
 static int dmaengine_pcm_open(struct snd_soc_component *component,
 			      struct snd_pcm_substream *substream)
 {
@@ -165,13 +174,34 @@ static int dmaengine_pcm_open(struct snd_soc_component *component,
 	if (ret)
 		return ret;
 
-	return snd_dmaengine_pcm_open(substream, chan);
+	ret = snd_dmaengine_pcm_open(substream, chan);
+	if (!ret) {
+		struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+		struct snd_soc_dai *cpu_dai;
+
+		if (rtd->num_cpus == 1) {
+			cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+			if (cpu_dai->driver->ops && cpu_dai->driver->ops->pcm_async_fault) {
+				ret = snd_dmaengine_pcm_set_error_sink(substream,
+							    dmaengine_pcm_cpu_fault, cpu_dai);
+				if (ret)
+					snd_dmaengine_pcm_close(substream);
+			}
+		}
+	}
+	return ret;
 }
 
 static int dmaengine_pcm_close(struct snd_soc_component *component,
 			       struct snd_pcm_substream *substream)
 {
 	return snd_dmaengine_pcm_close(substream);
+}
+
+static int dmaengine_pcm_quiesce(struct snd_soc_component *component,
+				 struct snd_pcm_substream *substream)
+{
+	return snd_dmaengine_pcm_quiesce(substream);
 }
 
 static int dmaengine_pcm_trigger(struct snd_soc_component *component,
@@ -336,6 +366,9 @@ static const struct snd_soc_component_driver dmaengine_pcm_component = {
 	.open		= dmaengine_pcm_open,
 	.close		= dmaengine_pcm_close,
 	.hw_params	= dmaengine_pcm_hw_params,
+	.prepare	= dmaengine_pcm_quiesce,
+	.hw_free	= dmaengine_pcm_quiesce,
+	.sync_stop	= dmaengine_pcm_quiesce,
 	.trigger	= dmaengine_pcm_trigger,
 	.pointer	= dmaengine_pcm_pointer,
 	.pcm_construct	= dmaengine_pcm_new,
@@ -347,6 +380,9 @@ static const struct snd_soc_component_driver dmaengine_pcm_component_process = {
 	.open		= dmaengine_pcm_open,
 	.close		= dmaengine_pcm_close,
 	.hw_params	= dmaengine_pcm_hw_params,
+	.prepare	= dmaengine_pcm_quiesce,
+	.hw_free	= dmaengine_pcm_quiesce,
+	.sync_stop	= dmaengine_pcm_quiesce,
 	.trigger	= dmaengine_pcm_trigger,
 	.pointer	= dmaengine_pcm_pointer,
 	.copy_user	= dmaengine_copy_user,

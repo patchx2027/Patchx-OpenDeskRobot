@@ -492,10 +492,11 @@ endif
 
 ARCH ?= arm64
 BCMDHD_ROOT = $(src)
+BCMDHD_SRC := $(abspath $(if $(filter /%,$(src)),$(src),$(srctree)/$(src)))
 #$(warning "BCMDHD_ROOT=$(BCMDHD_ROOT)")
 EXTRA_CFLAGS = $(DHDCFLAGS)
 EXTRA_CFLAGS += -DDHD_COMPILED=\"$(BCMDHD_ROOT)\"
-EXTRA_CFLAGS += -I$(BCMDHD_ROOT)/include/ -I$(BCMDHD_ROOT)/
+EXTRA_CFLAGS += -I$(BCMDHD_SRC)/include/ -I$(BCMDHD_SRC)/
 ifeq ($(CONFIG_AP6XXX),m)
 EXTRA_LDFLAGS += --strip-debug
 endif

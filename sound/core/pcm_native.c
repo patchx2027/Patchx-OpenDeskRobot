@@ -1934,9 +1934,11 @@ static int snd_pcm_do_prepare(struct snd_pcm_substream *substream,
 	int err;
 	snd_pcm_sync_stop(substream, true);
 	err = substream->ops->prepare(substream);
+	if (err >= 0)
+		err = snd_pcm_do_reset(substream, state);
 	if (err < 0)
-		return err;
-	return snd_pcm_do_reset(substream, state);
+		snd_pcm_set_state(substream, SNDRV_PCM_STATE_SETUP);
+	return err;
 }
 
 static void snd_pcm_post_prepare(struct snd_pcm_substream *substream,

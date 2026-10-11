@@ -443,10 +443,35 @@ static void dma_device_put(struct dma_device *device)
  *
  * Must be called under dma_list_mutex.
  */
+/* Provider remove only: success closes all future core client acquisitions. */
+int dmaengine_device_quiesce(struct dma_device *device)
+{
+	struct dma_chan *chan;
+	int ret = 0;
+
+	mutex_lock(&dma_list_mutex);
+	list_for_each_entry(chan, &device->channels, device_node) {
+		if (chan->client_count) {
+			ret = -EBUSY;
+			break;
+		}
+	}
+	if (!ret)
+		device->lifecycle_closing = true;
+	mutex_unlock(&dma_list_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(dmaengine_device_quiesce);
+
 static int dma_chan_get(struct dma_chan *chan)
 {
 	struct module *owner = dma_chan_to_owner(chan);
 	int ret;
+
+	lockdep_assert_held(&dma_list_mutex);
+	/* ESHUTDOWN avoids the ENODEV/module-removal list deletion path. */
+	if (chan->device->lifecycle_closing)
+		return -ESHUTDOWN;
 
 	/* The channel is already in use, update client count */
 	if (chan->client_count) {
@@ -1137,13 +1162,18 @@ EXPORT_SYMBOL_GPL(dma_async_device_channel_unregister);
  * device_release() callback which will be called after
  * dma_async_device_unregister() is called and no further references are taken.
  */
-int dma_async_device_register(struct dma_device *device)
+static int __dma_async_device_register(struct dma_device *device,
+		int (*checked)(struct dma_chan *chan))
 {
 	int rc;
 	struct dma_chan* chan;
 
 	if (!device)
 		return -ENODEV;
+
+	/* Initialize new fields for every provider, including nonzero allocations. */
+	device->lifecycle_closing = false;
+	device->device_synchronize_checked = checked;
 
 	/* validate device routines */
 	if (!device->dev) {
@@ -1299,6 +1329,20 @@ err_out:
 	}
 	return rc;
 }
+
+int dma_async_device_register(struct dma_device *device)
+{
+	return __dma_async_device_register(device, NULL);
+}
+
+int dma_async_device_register_checked(struct dma_device *device,
+		int (*checked)(struct dma_chan *chan))
+{
+	if (!checked)
+		return -EINVAL;
+	return __dma_async_device_register(device, checked);
+}
+EXPORT_SYMBOL_GPL(dma_async_device_register_checked);
 EXPORT_SYMBOL(dma_async_device_register);
 
 /**

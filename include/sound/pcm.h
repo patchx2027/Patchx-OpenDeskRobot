@@ -401,6 +401,8 @@ struct snd_pcm_runtime {
 
 	/* -- private section -- */
 	void *private_data;
+	/* BSP checked DMA PCM only; allocator guards run in process context. */
+	int (*dma_quiesce)(struct snd_pcm_substream *substream);
 	void (*private_free)(struct snd_pcm_runtime *runtime);
 
 	/* -- hardware description -- */
@@ -1205,6 +1207,14 @@ void snd_pcm_lib_preallocate_pages_for_all(struct snd_pcm *pcm,
 					  int type, void *data,
 					  size_t size, size_t max);
 int snd_pcm_lib_malloc_pages(struct snd_pcm_substream *substream, size_t size);
+struct snd_pcm_dma_quarantine;
+struct snd_pcm_dma_quarantine *snd_pcm_dma_quarantine_alloc(void);
+void snd_pcm_dma_quarantine_free(struct snd_pcm_dma_quarantine *token);
+size_t snd_pcm_dma_quarantine_bytes(void);
+int snd_pcm_dma_quarantine_check(struct snd_pcm_substream *substream, struct device *device);
+int snd_pcm_dma_quarantine(struct snd_pcm_substream *substream,
+		struct snd_pcm_dma_quarantine *token, struct device *device);
+
 int snd_pcm_lib_free_pages(struct snd_pcm_substream *substream);
 
 void snd_pcm_set_managed_buffer(struct snd_pcm_substream *substream, int type,

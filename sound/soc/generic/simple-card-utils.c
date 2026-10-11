@@ -12,6 +12,7 @@
 #include <linux/of_gpio.h>
 #include <linux/of_graph.h>
 #include <sound/jack.h>
+#include <sound/pcm_params.h>
 #include <sound/simple_card_utils.h>
 
 void asoc_simple_convert_fixup(struct asoc_simple_data *data,
@@ -219,7 +220,9 @@ void asoc_simple_shutdown(struct snd_pcm_substream *substream)
 	struct simple_dai_props *dai_props =
 		simple_priv_to_props(priv, rtd->num);
 
-	if (dai_props->mclk_fs) {
+	if (dai_props->mclk_fs &&
+	    !snd_soc_dai_active(asoc_rtd_to_cpu(rtd, 0)) &&
+	    !snd_soc_dai_active(asoc_rtd_to_codec(rtd, 0))) {
 		snd_soc_dai_set_sysclk(codec_dai, 0, 0, SND_SOC_CLOCK_IN);
 		snd_soc_dai_set_sysclk(cpu_dai, 0, 0, SND_SOC_CLOCK_OUT);
 	}
@@ -255,10 +258,25 @@ int asoc_simple_hw_params(struct snd_pcm_substream *substream,
 	struct simple_dai_props *dai_props =
 		simple_priv_to_props(priv, rtd->num);
 	unsigned int mclk, mclk_fs = 0;
-	int ret;
+	int ret, cpu_reuse, codec_reuse;
 
 	if (dai_props->mclk_fs)
 		mclk_fs = dai_props->mclk_fs;
+
+	if (snd_soc_dai_hw_params_any(cpu_dai) || snd_soc_dai_hw_params_any(codec_dai)) {
+		if (rtd->num_cpus != 1 || rtd->num_codecs != 1 ||
+		    !snd_soc_dai_hw_params_managed(cpu_dai) ||
+		    !snd_soc_dai_hw_params_managed(codec_dai) || mclk_fs != 256 ||
+		    params_rate(params) != 48000 || params_channels(params) != 2 ||
+		    params_format(params) != SNDRV_PCM_FORMAT_S16_LE)
+			return -EINVAL;
+		cpu_reuse = snd_soc_dai_hw_params_reuse(cpu_dai, substream);
+		codec_reuse = snd_soc_dai_hw_params_reuse(codec_dai, substream);
+		if (cpu_reuse < 0 || codec_reuse < 0 || cpu_reuse != codec_reuse)
+			return cpu_reuse < 0 ? cpu_reuse : codec_reuse < 0 ? codec_reuse : -EINVAL;
+		if (cpu_reuse)
+			return 0; /* No shared CCF query/write or public sysclk request. */
+	}
 
 	if (mclk_fs) {
 		mclk = params_rate(params) * mclk_fs;

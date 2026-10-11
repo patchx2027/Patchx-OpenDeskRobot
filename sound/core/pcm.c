@@ -1224,8 +1224,19 @@ static void snd_pcm_proc_done(void)
  *  ENTRY functions
  */
 
+static ssize_t dma_quarantine_bytes_show(struct class *class,
+			struct class_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%zu\n", snd_pcm_dma_quarantine_bytes());
+}
+static CLASS_ATTR_RO(dma_quarantine_bytes);
+
 static int __init alsa_pcm_init(void)
 {
+	int ret = class_create_file(sound_class, &class_attr_dma_quarantine_bytes);
+
+	if (ret)
+		return ret;
 	snd_ctl_register_ioctl(snd_pcm_control_ioctl);
 	snd_ctl_register_ioctl_compat(snd_pcm_control_ioctl);
 	snd_pcm_proc_init();
@@ -1234,6 +1245,7 @@ static int __init alsa_pcm_init(void)
 
 static void __exit alsa_pcm_exit(void)
 {
+	class_remove_file(sound_class, &class_attr_dma_quarantine_bytes);
 	snd_ctl_unregister_ioctl(snd_pcm_control_ioctl);
 	snd_ctl_unregister_ioctl_compat(snd_pcm_control_ioctl);
 	snd_pcm_proc_done();

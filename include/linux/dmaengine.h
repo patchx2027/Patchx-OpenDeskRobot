@@ -935,6 +935,12 @@ struct dma_device {
 	int (*device_resume)(struct dma_chan *chan);
 	int (*device_terminate_all)(struct dma_chan *chan);
 	void (*device_synchronize)(struct dma_chan *chan);
+	/* BSP optional: negative means software drained but allocation must be retained. */
+	int (*device_synchronize_checked)(struct dma_chan *chan);
+	/* Cached read-only open admission required by checked providers. */
+	int (*device_check_open)(struct dma_chan *chan);
+	/* BSP terminal provider removal gate; protected by DMA core mutex. */
+	bool lifecycle_closing;
 
 	enum dma_status (*device_tx_status)(struct dma_chan *chan,
 					    dma_cookie_t cookie,
@@ -1159,6 +1165,27 @@ static inline void dmaengine_synchronize(struct dma_chan *chan)
 
 	if (chan->device->device_synchronize)
 		chan->device->device_synchronize(chan);
+}
+
+/* BSP checked providers must fail-stop rather than return with live callbacks. */
+/* Ordinary providers retain their original open contract. */
+static inline int dmaengine_check_open(struct dma_chan *chan)
+{
+	if (!chan->device->device_synchronize_checked)
+		return 0;
+	if (!chan->device->device_check_open)
+		return -EOPNOTSUPP;
+	return chan->device->device_check_open(chan);
+}
+
+static inline int dmaengine_synchronize_checked(struct dma_chan *chan)
+{
+	might_sleep();
+	if (chan->device->device_synchronize_checked)
+		return chan->device->device_synchronize_checked(chan);
+	/* Other providers retain their existing void synchronization contract. */
+	dmaengine_synchronize(chan);
+	return 0;
 }
 
 /**
@@ -1574,6 +1601,10 @@ static inline int dmaengine_desc_free(struct dma_async_tx_descriptor *desc)
 /* --- DMA device --- */
 
 int dma_async_device_register(struct dma_device *device);
+int dma_async_device_register_checked(struct dma_device *device,
+		int (*checked)(struct dma_chan *chan));
+/* Terminal provider remove admission; no successful re-registration before unregister. */
+int dmaengine_device_quiesce(struct dma_device *device);
 int dmaenginem_async_device_register(struct dma_device *device);
 void dma_async_device_unregister(struct dma_device *device);
 int dma_async_device_channel_register(struct dma_device *device,

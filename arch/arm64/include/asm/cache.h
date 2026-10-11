@@ -53,11 +53,11 @@
 #ifndef __ASSEMBLY__
 
 #include <linux/bitops.h>
-#include <linux/kasan-enabled.h>
 
 #ifdef CONFIG_KASAN_SW_TAGS
 #define ARCH_SLAB_MINALIGN	(1ULL << KASAN_SHADOW_SCALE_SHIFT)
 #elif defined(CONFIG_KASAN_HW_TAGS)
+#include <linux/kasan-enabled.h>
 static inline unsigned int arch_slab_minalign(void)
 {
 	return kasan_hw_tags_enabled() ? MTE_GRANULE_SIZE :

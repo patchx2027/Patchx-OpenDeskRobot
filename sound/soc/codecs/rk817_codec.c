@@ -68,6 +68,19 @@ struct rk817_codec_priv {
 	struct rk808 *rk817;
 	struct clk *mclk;
 	struct mutex clk_lock;
+	struct mutex params_lock;
+	struct snd_soc_dai_params_state shared_params;
+	struct snd_pcm_substream *shared_open[2];
+	bool shared_params_enabled;
+	unsigned int shared_dai_fmt;
+	int params_error;
+	/* Actual MCLK references retained after an uncertain checked path write. */
+	bool retained_clock[2];
+	bool shutdown_started;
+	bool terminal_started;
+	bool terminal_done;
+	bool probe_clock_owned;
+	bool clk_lock_initialized;
 
 	unsigned int clk_capture;
 	unsigned int clk_playback;
@@ -83,6 +96,8 @@ struct rk817_codec_priv {
 	bool use_ext_amplifier;
 	bool adc_for_loopback;
 	bool resume_path;
+	/* First mute I/O error; cached success does not establish recovery. */
+	int mute_io_error;
 
 	bool out_l2spk_r2hp;
 	long int playback_path;
@@ -94,144 +109,6 @@ struct rk817_codec_priv {
 	int hp_mute_delay;
 	int chip_ver;
 };
-
-static const struct reg_default rk817_reg_defaults[] = {
-	{ RK817_CODEC_DTOP_VUCTL, 0x003 },
-	{ RK817_CODEC_DTOP_VUCTIME, 0x00 },
-	{ RK817_CODEC_DTOP_LPT_SRST, 0x00 },
-	{ RK817_CODEC_DTOP_DIGEN_CLKE, 0x00 },
-	{ RK817_CODEC_AREF_RTCFG0, 0x00 },
-	{ RK817_CODEC_AREF_RTCFG1, 0x06 },
-	{ RK817_CODEC_AADC_CFG0, 0xc8 },
-	{ RK817_CODEC_AADC_CFG1, 0x00 },
-	{ RK817_CODEC_DADC_VOLL, 0x00 },
-	{ RK817_CODEC_DADC_VOLR, 0x00 },
-	{ RK817_CODEC_DADC_SR_ACL0, 0x00 },
-	{ RK817_CODEC_DADC_ALC1, 0x00 },
-	{ RK817_CODEC_DADC_ALC2, 0x00 },
-	{ RK817_CODEC_DADC_NG, 0x00 },
-	{ RK817_CODEC_DADC_HPF, 0x00 },
-	{ RK817_CODEC_DADC_RVOLL, 0xff },
-	{ RK817_CODEC_DADC_RVOLR, 0xff },
-	{ RK817_CODEC_AMIC_CFG0, 0x70 },
-	{ RK817_CODEC_AMIC_CFG1, 0x00 },
-	{ RK817_CODEC_DMIC_PGA_GAIN, 0x66 },
-	{ RK817_CODEC_DMIC_LMT1, 0x00 },
-	{ RK817_CODEC_DMIC_LMT2, 0x00 },
-	{ RK817_CODEC_DMIC_NG1, 0x00 },
-	{ RK817_CODEC_DMIC_NG2, 0x00 },
-	{ RK817_CODEC_ADAC_CFG0, 0x00 },
-	{ RK817_CODEC_ADAC_CFG1, 0x07 },
-	{ RK817_CODEC_DDAC_POPD_DACST, 0x82 },
-	{ RK817_CODEC_DDAC_VOLL, 0x00 },
-	{ RK817_CODEC_DDAC_VOLR, 0x00 },
-	{ RK817_CODEC_DDAC_SR_LMT0, 0x00 },
-	{ RK817_CODEC_DDAC_LMT1, 0x00 },
-	{ RK817_CODEC_DDAC_LMT2, 0x00 },
-	{ RK817_CODEC_DDAC_MUTE_MIXCTL, 0xa0 },
-	{ RK817_CODEC_DDAC_RVOLL, 0xff },
-	{ RK817_CODEC_DDAC_RVOLR, 0xff },
-	{ RK817_CODEC_AHP_ANTI0, 0x00 },
-	{ RK817_CODEC_AHP_ANTI1, 0x00 },
-	{ RK817_CODEC_AHP_CFG0, 0xe0 },
-	{ RK817_CODEC_AHP_CFG1, 0x1f },
-	{ RK817_CODEC_AHP_CP, 0x09 },
-	{ RK817_CODEC_ACLASSD_CFG1, 0x69 },
-	{ RK817_CODEC_ACLASSD_CFG2, 0x44 },
-	{ RK817_CODEC_APLL_CFG0, 0x04 },
-	{ RK817_CODEC_APLL_CFG1, 0x00 },
-	{ RK817_CODEC_APLL_CFG2, 0x30 },
-	{ RK817_CODEC_APLL_CFG3, 0x19 },
-	{ RK817_CODEC_APLL_CFG4, 0x65 },
-	{ RK817_CODEC_APLL_CFG5, 0x01 },
-	{ RK817_CODEC_DI2S_CKM, 0x01 },
-	{ RK817_CODEC_DI2S_RSD, 0x00 },
-	{ RK817_CODEC_DI2S_RXCR1, 0x00 },
-	{ RK817_CODEC_DI2S_RXCR2, 0x17 },
-	{ RK817_CODEC_DI2S_RXCMD_TSD, 0x00 },
-	{ RK817_CODEC_DI2S_TXCR1, 0x00 },
-	{ RK817_CODEC_DI2S_TXCR2, 0x17 },
-	{ RK817_CODEC_DI2S_TXCR3_TXCMD, 0x00 },
-};
-
-static bool rk817_volatile_register(struct device *dev, unsigned int reg)
-{
-	switch (reg) {
-	case RK817_CODEC_DTOP_LPT_SRST:
-	case RK817_PMIC_CHIP_NAME:
-	case RK817_PMIC_CHIP_VER:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static bool rk817_codec_register(struct device *dev, unsigned int reg)
-{
-	switch (reg) {
-	case RK817_CODEC_DTOP_VUCTL:
-	case RK817_CODEC_DTOP_VUCTIME:
-	case RK817_CODEC_DTOP_LPT_SRST:
-	case RK817_CODEC_DTOP_DIGEN_CLKE:
-	case RK817_CODEC_AREF_RTCFG0:
-	case RK817_CODEC_AREF_RTCFG1:
-	case RK817_CODEC_AADC_CFG0:
-	case RK817_CODEC_AADC_CFG1:
-	case RK817_CODEC_DADC_VOLL:
-	case RK817_CODEC_DADC_VOLR:
-	case RK817_CODEC_DADC_SR_ACL0:
-	case RK817_CODEC_DADC_ALC1:
-	case RK817_CODEC_DADC_ALC2:
-	case RK817_CODEC_DADC_NG:
-	case RK817_CODEC_DADC_HPF:
-	case RK817_CODEC_DADC_RVOLL:
-	case RK817_CODEC_DADC_RVOLR:
-	case RK817_CODEC_AMIC_CFG0:
-	case RK817_CODEC_AMIC_CFG1:
-	case RK817_CODEC_DMIC_PGA_GAIN:
-	case RK817_CODEC_DMIC_LMT1:
-	case RK817_CODEC_DMIC_LMT2:
-	case RK817_CODEC_DMIC_NG1:
-	case RK817_CODEC_DMIC_NG2:
-	case RK817_CODEC_ADAC_CFG0:
-	case RK817_CODEC_ADAC_CFG1:
-	case RK817_CODEC_DDAC_POPD_DACST:
-	case RK817_CODEC_DDAC_VOLL:
-	case RK817_CODEC_DDAC_VOLR:
-	case RK817_CODEC_DDAC_SR_LMT0:
-	case RK817_CODEC_DDAC_LMT1:
-	case RK817_CODEC_DDAC_LMT2:
-	case RK817_CODEC_DDAC_MUTE_MIXCTL:
-	case RK817_CODEC_DDAC_RVOLL:
-	case RK817_CODEC_DDAC_RVOLR:
-	case RK817_CODEC_AHP_ANTI0:
-	case RK817_CODEC_AHP_ANTI1:
-	case RK817_CODEC_AHP_CFG0:
-	case RK817_CODEC_AHP_CFG1:
-	case RK817_CODEC_AHP_CP:
-	case RK817_CODEC_ACLASSD_CFG1:
-	case RK817_CODEC_ACLASSD_CFG2:
-	case RK817_CODEC_APLL_CFG0:
-	case RK817_CODEC_APLL_CFG1:
-	case RK817_CODEC_APLL_CFG2:
-	case RK817_CODEC_APLL_CFG3:
-	case RK817_CODEC_APLL_CFG4:
-	case RK817_CODEC_APLL_CFG5:
-	case RK817_CODEC_DI2S_CKM:
-	case RK817_CODEC_DI2S_RSD:
-	case RK817_CODEC_DI2S_RXCR1:
-	case RK817_CODEC_DI2S_RXCR2:
-	case RK817_CODEC_DI2S_RXCMD_TSD:
-	case RK817_CODEC_DI2S_TXCR1:
-	case RK817_CODEC_DI2S_TXCR2:
-	case RK817_CODEC_DI2S_TXCR3_TXCMD:
-	case RK817_PMIC_CHIP_NAME:
-	case RK817_PMIC_CHIP_VER:
-		return true;
-	default:
-		return false;
-	}
-}
 
 static int rk817_codec_ctl_gpio(struct rk817_codec_priv *rk817,
 				int gpio, int level)
@@ -262,80 +139,139 @@ static int rk817_codec_ctl_gpio(struct rk817_codec_priv *rk817,
 static int rk817_reset(struct snd_soc_component *component)
 {
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+	int ret;
 
-	snd_soc_component_write(component, RK817_CODEC_DTOP_LPT_SRST, 0x40);
-	snd_soc_component_write(component, RK817_CODEC_DDAC_POPD_DACST, 0x02);
-	snd_soc_component_write(component, RK817_CODEC_DI2S_CKM, 0x00);
-	snd_soc_component_write(component, RK817_CODEC_DTOP_DIGEN_CLKE, 0xff);
-	snd_soc_component_write(component, RK817_CODEC_APLL_CFG1, 0x58);
-	snd_soc_component_write(component, RK817_CODEC_APLL_CFG2, 0x2d);
-	snd_soc_component_write(component, RK817_CODEC_APLL_CFG3, 0x0c);
-	snd_soc_component_write(component, RK817_CODEC_APLL_CFG5, 0x00);
-	snd_soc_component_write(component, RK817_CODEC_DTOP_DIGEN_CLKE, 0x00);
+	ret = snd_soc_component_write(component, RK817_CODEC_DTOP_LPT_SRST, 0x40);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_DDAC_POPD_DACST, 0x02);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_DI2S_CKM, 0x00);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_DTOP_DIGEN_CLKE, 0xff);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG1, 0x58);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG2, 0x2d);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG3, 0x0c);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG5, 0x00);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_DTOP_DIGEN_CLKE, 0x00);
+	if (ret < 0)
+		return ret;
 	if (rk817->chip_ver <= 0x4) {
 		DBG("%s (%d): 0x4 and previous versions\n",
 		    __func__, __LINE__);
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c);
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95);
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c);
+		if (ret < 0)
+			return ret;
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95);
+		if (ret < 0)
+			return ret;
 	} else {
 		DBG("%s (%d): 0x4 version later\n",
 		    __func__, __LINE__);
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04);
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5);
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04);
+		if (ret < 0)
+			return ret;
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5);
+		if (ret < 0)
+			return ret;
 	}
-	snd_soc_component_write(component, RK817_CODEC_DTOP_DIGEN_CLKE, 0x00);
+	ret = snd_soc_component_write(component, RK817_CODEC_DTOP_DIGEN_CLKE, 0x00);
+	if (ret < 0)
+		return ret;
 
 	return 0;
 }
 
 static int rk817_restart_dac_digital_clk(struct snd_soc_component *component)
 {
-	snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
+	int ret;
+
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
 				      PWD_DACBIAS_MASK, PWD_DACBIAS_DOWN);
+	if (ret < 0)
+		return ret;
 	usleep_range(500, 600);
-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 				      DAC_DIG_CLK_MASK, DAC_DIG_CLK_DIS);
+	if (ret < 0)
+		return ret;
 	usleep_range(500, 600);
-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 				      DAC_DIG_CLK_MASK, DAC_DIG_CLK_EN);
+	if (ret < 0)
+		return ret;
 	DBG("%s: %d - Playback DIG CLK OPS\n", __func__, __LINE__);
 	usleep_range(500, 600);
-	snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
 				      PWD_DACBIAS_MASK, PWD_DACBIAS_ON);
+	if (ret < 0)
+		return ret;
 
 	return 0;
 }
 
 static int rk817_restart_dac_digital_clk_and_apll(struct snd_soc_component *component)
 {
-	snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
+	int ret;
+
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
 				      PWD_DACBIAS_MASK, PWD_DACBIAS_DOWN);
+	if (ret < 0)
+		return ret;
 	usleep_range(500, 600);
-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 				      DAC_DIG_CLK_MASK, DAC_DIG_CLK_DIS);
+	if (ret < 0)
+		return ret;
 	usleep_range(500, 600);
-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 				      DAC_DIG_CLK_MASK, DAC_DIG_CLK_EN);
+	if (ret < 0)
+		return ret;
 	DBG("%s: %d - Playback DIG CLK OPS\n", __func__, __LINE__);
-	snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
 				      PLL_PW_DOWN, PLL_PW_DOWN);
+	if (ret < 0)
+		return ret;
 	usleep_range(50, 60);
-	snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
 				      PLL_PW_DOWN, PLL_PW_UP);
+	if (ret < 0)
+		return ret;
 	usleep_range(500, 600);
-	snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
 				      PWD_DACBIAS_MASK, PWD_DACBIAS_ON);
+	if (ret < 0)
+		return ret;
 
 	return 0;
 }
 
 static int rk817_restart_adc_digital_clk(struct snd_soc_component *component)
 {
-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+	int ret;
+
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 				      ADC_DIG_CLK_MASK, ADC_DIG_CLK_DIS);
+	if (ret < 0)
+		return ret;
 	usleep_range(500, 600);
-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 				      ADC_DIG_CLK_MASK, ADC_DIG_CLK_EN);
+	if (ret < 0)
+		return ret;
 	DBG("%s: %d - Capture DIG CLK OPS\n", __func__, __LINE__);
 
 	return 0;
@@ -343,17 +279,27 @@ static int rk817_restart_adc_digital_clk(struct snd_soc_component *component)
 
 static int rk817_restart_adc_digital_clk_and_apll(struct snd_soc_component *component)
 {
-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+	int ret;
+
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 				      ADC_DIG_CLK_MASK, ADC_DIG_CLK_DIS);
+	if (ret < 0)
+		return ret;
 	usleep_range(500, 600);
-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 				      ADC_DIG_CLK_MASK, ADC_DIG_CLK_EN);
+	if (ret < 0)
+		return ret;
 	DBG("%s: %d - Capture DIG CLK OPS\n", __func__, __LINE__);
-	snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
 				      PLL_PW_DOWN, PLL_PW_DOWN);
+	if (ret < 0)
+		return ret;
 	usleep_range(50, 60);
-	snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
 				      PLL_PW_DOWN, PLL_PW_UP);
+	if (ret < 0)
+		return ret;
 	usleep_range(500, 600);
 
 	return 0;
@@ -762,15 +708,474 @@ static int rk817_playback_path_config(struct snd_soc_component *component,
 	return 0;
 }
 
+/* Used only by the checked helpers below; every operation preserves errno. */
+#define RK817_SHARED_TRY(call) do { \
+	ret = (call); \
+	if (ret < 0) \
+		return ret; \
+} while (0)
+
+
+static int rk817_shared_power_up(struct snd_soc_component *component, int type)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+	int i, ret;
+
+	DBG("%s : power up %s %s %s\n", __func__,
+	    type & RK817_CODEC_PLAYBACK ? "playback" : "",
+	    type & RK817_CODEC_CAPTURE ? "capture" : "",
+	    type & RK817_CODEC_INCALL ? "incall" : "");
+
+	if (type & RK817_CODEC_PLAYBACK) {
+		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+					      RK817_CODEC_DTOP_DIGEN_CLKE,
+					      DAC_DIG_CLK_MASK, DAC_DIG_CLK_EN));
+		for (i = 0; i < RK817_CODEC_PLAYBACK_POWER_UP_LIST_LEN; i++) {
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						playback_power_up_list[i].reg,
+						playback_power_up_list[i].value));
+		}
+
+		/* configure APLL CFG0/4 */
+		if (rk817->chip_ver <= 0x4) {
+			DBG("%s (%d): 0x4 and previous versions\n",
+			    __func__, __LINE__);
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c));
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95));
+		} else {
+			DBG("%s: 0x4 version later\n", __func__);
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04));
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5));
+		}
+		RK817_SHARED_TRY(rk817_restart_dac_digital_clk(component));
+	}
+
+	if (type & RK817_CODEC_CAPTURE) {
+		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+					      RK817_CODEC_DTOP_DIGEN_CLKE,
+					      ADC_DIG_CLK_MASK,
+					      ADC_DIG_CLK_EN));
+		for (i = 0; i < RK817_CODEC_CAPTURE_POWER_UP_LIST_LEN; i++) {
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						capture_power_up_list[i].reg,
+						capture_power_up_list[i].value));
+		}
+
+		/* configure APLL CFG0/4 */
+		if (rk817->chip_ver <= 0x4) {
+			DBG("%s (%d): 0x4 and previous versions\n",
+			    __func__, __LINE__);
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c));
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95));
+		} else {
+			DBG("%s: 0x4 version later\n", __func__);
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04));
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5));
+		}
+
+		RK817_SHARED_TRY(rk817_restart_adc_digital_clk(component));
+
+		if (rk817->mic_in_differential)
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_AMIC_CFG0,
+						      MIC_DIFF_MASK, MIC_DIFF_EN));
+		else
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_AMIC_CFG0,
+						      MIC_DIFF_MASK,
+						      MIC_DIFF_DIS));
+
+		if (rk817->pdmdata_out_enable)
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_DI2S_CKM,
+						      PDM_EN_MASK,
+						      PDM_EN_ENABLE));
+
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DADC_VOLL,
+					rk817->capture_volume));
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DADC_VOLR,
+					rk817->capture_volume));
+	}
+
+	return 0;
+}
+
+static int rk817_shared_power_down(struct snd_soc_component *component, int type)
+{
+	int i, ret;
+
+	DBG("%s : power down %s %s %s\n", __func__,
+	    type & RK817_CODEC_PLAYBACK ? "playback" : "",
+	    type & RK817_CODEC_CAPTURE ? "capture" : "",
+	    type & RK817_CODEC_INCALL ? "incall" : "");
+
+	/* mute output for pop noise */
+	if ((type & RK817_CODEC_PLAYBACK) ||
+	    (type & RK817_CODEC_INCALL)) {
+		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+					      RK817_CODEC_DDAC_MUTE_MIXCTL,
+					      DACMT_ENABLE, DACMT_ENABLE));
+	}
+
+	if (type & RK817_CODEC_CAPTURE) {
+		for (i = 0; i < RK817_CODEC_CAPTURE_POWER_DOWN_LIST_LEN; i++) {
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						capture_power_down_list[i].reg,
+						capture_power_down_list[i].value));
+		}
+		RK817_SHARED_TRY(snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+					      ADC_DIG_CLK_MASK, ADC_DIG_CLK_DIS));
+	}
+
+	if (type & RK817_CODEC_PLAYBACK) {
+		for (i = 0; i < RK817_CODEC_PLAYBACK_POWER_DOWN_LIST_LEN; i++) {
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						playback_power_down_list[i].reg,
+						playback_power_down_list[i].value));
+		}
+		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+					      RK817_CODEC_DTOP_DIGEN_CLKE,
+					      DAC_DIG_CLK_MASK, DAC_DIG_CLK_DIS));
+	}
+
+	if (type == RK817_CODEC_ALL) {
+		for (i = 0; i < RK817_CODEC_PLAYBACK_POWER_DOWN_LIST_LEN; i++) {
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						playback_power_down_list[i].reg,
+						playback_power_down_list[i].value));
+		}
+		for (i = 0; i < RK817_CODEC_CAPTURE_POWER_DOWN_LIST_LEN; i++) {
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						capture_power_down_list[i].reg,
+						capture_power_down_list[i].value));
+		}
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DTOP_DIGEN_CLKE, 0x00));
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG5, 0x01));
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AREF_RTCFG1, 0x06));
+	}
+
+	return 0;
+}
+
+static int rk817_shared_playback_apply(struct snd_soc_component *component,
+					long pre_path, long target_path)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+	int ret;
+
+	switch (target_path) {
+	case OFF:
+		if (pre_path != OFF && (pre_path != HP_PATH &&
+			pre_path != HP_NO_MIC && pre_path != RING_HP &&
+			pre_path != RING_HP_NO_MIC)) {
+			RK817_SHARED_TRY(rk817_shared_power_down(component, RK817_CODEC_PLAYBACK));
+			if (rk817->capture_path == 0)
+				RK817_SHARED_TRY(rk817_shared_power_down(component, RK817_CODEC_ALL));
+		}
+		break;
+	case RCV:
+	case SPK_PATH:
+	case RING_SPK:
+		if (pre_path == OFF)
+			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_PLAYBACK));
+		if (rk817->out_l2spk_r2hp) {
+			/* for costdown: ldac -> ClassD rdac -> Hp */
+			/* HP_CP_EN , CP 2.3V */
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CP,
+						0x11));
+			/* power on HP two stage opamp ,HP amplitude 0db */
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CFG0,
+						0x80));
+			/* power on dac ibias/l/r */
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+						PWD_DACBIAS_ON | PWD_DACD_ON |
+						PWD_DACL_ON | PWD_DACR_ON));
+			/* CLASS D mode */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DDAC_MUTE_MIXCTL,
+						0x18));
+			/* CLASS D enable */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_ACLASSD_CFG1,
+						0xa5));
+			/* restart CLASS D, OCPP/N */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_ACLASSD_CFG2,
+						0xf7));
+		} else if (!rk817->use_ext_amplifier) {
+			/* power on dac ibias/l/r */
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+						PWD_DACBIAS_ON | PWD_DACD_ON |
+						PWD_DACL_DOWN | PWD_DACR_DOWN));
+			/* CLASS D mode */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DDAC_MUTE_MIXCTL,
+						0x10));
+			/* CLASS D enable */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_ACLASSD_CFG1,
+						0xa5));
+			/* restart CLASS D, OCPP/N */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_ACLASSD_CFG2,
+						0xf7));
+		} else {
+			/* HP_CP_EN , CP 2.3V */
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CP,
+						0x11));
+			/* power on HP two stage opamp ,HP amplitude 0db */
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CFG0,
+						0x80));
+			/* power on dac ibias/l/r */
+			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+						PWD_DACBIAS_ON | PWD_DACD_DOWN |
+						PWD_DACL_ON | PWD_DACR_ON));
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_DDAC_MUTE_MIXCTL,
+						      DACMT_ENABLE, DACMT_DISABLE));
+		}
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLL,
+					rk817->spk_volume));
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLR,
+					rk817->spk_volume));
+		break;
+	case HP_PATH:
+	case HP_NO_MIC:
+	case RING_HP:
+	case RING_HP_NO_MIC:
+		if (pre_path == OFF)
+			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_PLAYBACK));
+		/* HP_CP_EN , CP 2.3V */
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CP, 0x11));
+		/* power on HP two stage opamp ,HP amplitude 0db */
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CFG0, 0x80));
+		/* power on dac ibias/l/r */
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+					PWD_DACBIAS_ON | PWD_DACD_DOWN |
+					PWD_DACL_ON | PWD_DACR_ON));
+		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+					      RK817_CODEC_DDAC_MUTE_MIXCTL,
+					      DACMT_ENABLE, DACMT_DISABLE));
+
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLL,
+					rk817->hp_volume));
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLR,
+					rk817->hp_volume));
+		break;
+	case BT:
+		break;
+	case SPK_HP:
+	case RING_SPK_HP:
+		if (pre_path == OFF)
+			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_PLAYBACK));
+
+		/* HP_CP_EN , CP 2.3V  */
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CP, 0x11));
+		/* power on HP two stage opamp ,HP amplitude 0db */
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CFG0, 0x80));
+
+		/* power on dac ibias/l/r */
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+					PWD_DACBIAS_ON | PWD_DACD_ON |
+					PWD_DACL_ON | PWD_DACR_ON));
+
+		if (!rk817->use_ext_amplifier) {
+			/* CLASS D mode */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DDAC_MUTE_MIXCTL,
+						0x10));
+			/* CLASS D enable */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_ACLASSD_CFG1,
+						0xa5));
+			/* restart CLASS D, OCPP/N */
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_ACLASSD_CFG2,
+						0xf7));
+		}
+
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLL,
+					rk817->hp_volume));
+		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLR,
+					rk817->hp_volume));
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int rk817_shared_capture_apply(struct snd_soc_component *component,
+					long pre_path, long target_path)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+	int ret;
+
+	switch (target_path) {
+	case MIC_OFF:
+		if (pre_path != MIC_OFF) {
+			RK817_SHARED_TRY(rk817_shared_power_down(component, RK817_CODEC_CAPTURE));
+			if (rk817->playback_path == OFF)
+				RK817_SHARED_TRY(rk817_shared_power_down(component, RK817_CODEC_ALL));
+		}
+		break;
+	case MAIN_MIC:
+		if (pre_path == MIC_OFF)
+			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_CAPTURE));
+
+		if (rk817->adc_for_loopback) {
+			/* don't need to gain when adc use for loopback */
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_AMIC_CFG0,
+						      0xf,
+						      0x0));
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DMIC_PGA_GAIN,
+						0x66));
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DADC_VOLL,
+						0x00));
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DADC_VOLR,
+						0x00));
+			break;
+		}
+		if (!rk817->mic_in_differential) {
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DADC_VOLR,
+						0xff));
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_AADC_CFG0,
+						      ADC_R_PWD_MASK,
+						      ADC_R_PWD_EN));
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_AMIC_CFG0,
+						      PWD_PGA_R_MASK,
+						      PWD_PGA_R_EN));
+		}
+		break;
+	case HANDS_FREE_MIC:
+		if (pre_path == MIC_OFF)
+			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_CAPTURE));
+
+		if (rk817->adc_for_loopback) {
+			/* don't need to gain when adc use for loopback */
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_AMIC_CFG0,
+						      0xf,
+						      0x0));
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DMIC_PGA_GAIN,
+						0x66));
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DADC_VOLL,
+						0x00));
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DADC_VOLR,
+						0x00));
+			break;
+		}
+		if (!rk817->mic_in_differential) {
+			RK817_SHARED_TRY(snd_soc_component_write(component,
+						RK817_CODEC_DADC_VOLL,
+						0xff));
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_AADC_CFG0,
+						      ADC_L_PWD_MASK,
+						      ADC_L_PWD_EN));
+			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
+						      RK817_CODEC_AMIC_CFG0,
+						      PWD_PGA_L_MASK,
+						      PWD_PGA_L_EN));
+		}
+		break;
+	case BT_SCO_MIC:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+#undef RK817_SHARED_TRY
+
+/* Caller owns params_lock; successful path state is published after all I/O. */
+static int rk817_shared_path_config(struct snd_soc_component *component,
+				   int stream, long target_path)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	long *path = stream ? &rk817->capture_path : &rk817->playback_path;
+	unsigned int *lease = stream ? &rk817->clk_capture : &rk817->clk_playback;
+	bool new_clock = false;
+	int ret;
+
+	if (rk817->terminal_started)
+		return -ESHUTDOWN;
+
+	if (target_path < 0 || target_path > (stream ? BT_SCO_MIC : RING_SPK_HP))
+		return -EINVAL;
+	/* A same-value observation is not a recovery or an I/O operation. */
+	if (*path == target_path)
+		return 0;
+	if (p->pending || p->owner[0] || p->owner[1])
+		return -EBUSY;
+	if (rk817->params_error)
+		return rk817->params_error;
+
+	if (target_path && !*lease) {
+		mutex_lock(&rk817->clk_lock);
+		ret = clk_prepare_enable(rk817->mclk);
+		mutex_unlock(&rk817->clk_lock);
+		if (ret < 0)
+			return ret;
+		new_clock = true;
+	}
+	if (stream)
+		ret = rk817_shared_capture_apply(component, *path, target_path);
+	else
+		ret = rk817_shared_playback_apply(component, *path, target_path);
+	if (ret < 0) {
+		/* A partial codec write does not establish a reversible physical state. */
+		if (new_clock)
+			rk817->retained_clock[stream] = true;
+		if (!rk817->params_error)
+			rk817->params_error = ret;
+		return ret;
+	}
+
+	mutex_lock(&rk817->clk_lock);
+	if (!target_path && *lease)
+		clk_disable_unprepare(rk817->mclk);
+	*lease = target_path ? 1 : 0;
+	*path = target_path;
+	mutex_unlock(&rk817->clk_lock);
+	return 0;
+}
+
 static int rk817_playback_path_get(struct snd_kcontrol *kcontrol,
 				   struct snd_ctl_elem_value *ucontrol)
 {
 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
 
+	if (rk817->shared_params_enabled) {
+		mutex_lock(&rk817->params_lock);
+		if (rk817->terminal_started) {
+			mutex_unlock(&rk817->params_lock);
+			return -ESHUTDOWN;
+		}
+	}
+
+
 	DBG("%s : playback_path %ld\n", __func__, rk817->playback_path);
 
 	ucontrol->value.integer.value[0] = rk817->playback_path;
+
+	if (rk817->shared_params_enabled)
+		mutex_unlock(&rk817->params_lock);
 
 	return 0;
 }
@@ -780,6 +1185,16 @@ static int rk817_playback_path_put(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+
+	if (rk817->shared_params_enabled) {
+		long value = ucontrol->value.integer.value[0];
+		int ret;
+
+		mutex_lock(&rk817->params_lock);
+		ret = rk817_shared_path_config(component, 0, value);
+		mutex_unlock(&rk817->params_lock);
+		return ret;
+	}
 
 	if (rk817->playback_path == ucontrol->value.integer.value[0]) {
 		DBG("%s : playback_path is not changed!\n",
@@ -908,10 +1323,22 @@ static int rk817_capture_path_get(struct snd_kcontrol *kcontrol,
 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
 
+	if (rk817->shared_params_enabled) {
+		mutex_lock(&rk817->params_lock);
+		if (rk817->terminal_started) {
+			mutex_unlock(&rk817->params_lock);
+			return -ESHUTDOWN;
+		}
+	}
+
+
 	DBG("%s : capture_path %ld\n", __func__,
 	    rk817->capture_path);
 
 	ucontrol->value.integer.value[0] = rk817->capture_path;
+
+	if (rk817->shared_params_enabled)
+		mutex_unlock(&rk817->params_lock);
 
 	return 0;
 }
@@ -921,6 +1348,16 @@ static int rk817_capture_path_put(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+
+	if (rk817->shared_params_enabled) {
+		long value = ucontrol->value.integer.value[0];
+		int ret;
+
+		mutex_lock(&rk817->params_lock);
+		ret = rk817_shared_path_config(component, 1, value);
+		mutex_unlock(&rk817->params_lock);
+		return ret;
+	}
 
 	if (rk817->capture_path == ucontrol->value.integer.value[0]) {
 		DBG("%s : capture_path is not changed!\n",
@@ -938,9 +1375,21 @@ static int rk817_resume_path_get(struct snd_kcontrol *kcontrol,
 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
 
+	if (rk817->shared_params_enabled) {
+		mutex_lock(&rk817->params_lock);
+		if (rk817->terminal_started) {
+			mutex_unlock(&rk817->params_lock);
+			return -ESHUTDOWN;
+		}
+	}
+
+
 	DBG("%s : resume_path %d\n", __func__, rk817->resume_path);
 
 	ucontrol->value.integer.value[0] = rk817->resume_path;
+
+	if (rk817->shared_params_enabled)
+		mutex_unlock(&rk817->params_lock);
 
 	return 0;
 }
@@ -950,6 +1399,30 @@ static int rk817_resume_path_put(struct snd_kcontrol *kcontrol,
 {
 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+
+	if (rk817->shared_params_enabled) {
+		long value = ucontrol->value.integer.value[0];
+		int ret;
+
+		mutex_lock(&rk817->params_lock);
+		if (rk817->terminal_started)
+			ret = -ESHUTDOWN;
+		else if (value < 0 || value > 1)
+			ret = -EINVAL;
+		else if (rk817->resume_path == value)
+			ret = 0;
+		else if (rk817->shared_params.pending || rk817->shared_params.owner[0] ||
+			 rk817->shared_params.owner[1])
+			ret = -EBUSY;
+		else if (rk817->params_error)
+			ret = rk817->params_error;
+		else {
+			rk817->resume_path = value;
+			ret = 0;
+		}
+		mutex_unlock(&rk817->params_lock);
+		return ret;
+	}
 
 	rk817->resume_path = ucontrol->value.integer.value[0];
 
@@ -985,6 +1458,7 @@ static int rk817_set_dai_fmt(struct snd_soc_dai *codec_dai,
 {
 	struct snd_soc_component *component = codec_dai->component;
 	unsigned int i2s_mst = 0;
+	int ret;
 
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
 	case SND_SOC_DAIFMT_CBS_CFS:
@@ -999,10 +1473,10 @@ static int rk817_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	}
 	DBG("%s : i2s %s mode\n", __func__, i2s_mst ? "master" : "slave");
 
-	snd_soc_component_update_bits(component, RK817_CODEC_DI2S_CKM,
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DI2S_CKM,
 				      RK817_I2S_MODE_MASK, i2s_mst);
 
-	return 0;
+	return ret < 0 ? ret : 0;
 }
 
 static int rk817_hw_params(struct snd_pcm_substream *substream,
@@ -1014,18 +1488,30 @@ static int rk817_hw_params(struct snd_pcm_substream *substream,
 	unsigned int rate = params_rate(params);
 	unsigned char apll_cfg3_val;
 	unsigned char dtop_digen_sr_lmt0;
+	unsigned int rx_width;
+	unsigned int tx_width;
+	int ret;
+
+	/* Reject unsupported parameters before any codec register operation. */
+	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK &&
+	    substream->stream != SNDRV_PCM_STREAM_CAPTURE)
+		return -EINVAL;
+	switch (params_format(params)) {
+	case SNDRV_PCM_FORMAT_S16_LE:
+		rx_width = VDW_RX_16BITS;
+		tx_width = VDW_TX_16BITS;
+		break;
+	case SNDRV_PCM_FORMAT_S24_LE:
+	case SNDRV_PCM_FORMAT_S32_LE:
+		rx_width = VDW_RX_24BITS;
+		tx_width = VDW_TX_24BITS;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	DBG("%s : sample rate = %dHz\n", __func__, rate);
 
-	if (rk817->chip_ver <= 0x4) {
-		DBG("%s: 0x4 and previous versions\n", __func__);
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c);
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95);
-	} else {
-		DBG("%s: 0x4 version later\n", __func__);
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04);
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5);
-	}
 
 	switch (rate) {
 	case 8000:
@@ -1051,40 +1537,54 @@ static int rk817_hw_params(struct snd_pcm_substream *substream,
 		return -EINVAL;
 	}
 
+	if (rk817->chip_ver <= 0x4) {
+		DBG("%s: 0x4 and previous versions\n", __func__);
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c);
+		if (ret < 0)
+			return ret;
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95);
+		if (ret < 0)
+			return ret;
+	} else {
+		DBG("%s: 0x4 version later\n", __func__);
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04);
+		if (ret < 0)
+			return ret;
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5);
+		if (ret < 0)
+			return ret;
+	}
+
+
 	/**
 	 * Note that: If you use the ALSA hooks plugin, entering hw_params()
 	 * is before playback/capture_path_put, therefore, we need to configure
 	 * APLL_CFG3/DTOP_DIGEN_CLKE/DDAC_SR_LMT0 for different sample rates.
 	 */
 	if (!((substream->stream == SNDRV_PCM_STREAM_CAPTURE) && rk817->pdmdata_out_enable)) {
-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG3, apll_cfg3_val);
-		snd_soc_component_update_bits(component, RK817_CODEC_DDAC_SR_LMT0,
+		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG3, apll_cfg3_val);
+		if (ret < 0)
+			return ret;
+		ret = snd_soc_component_update_bits(component, RK817_CODEC_DDAC_SR_LMT0,
 					      DACSRT_MASK, dtop_digen_sr_lmt0);
-		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-			rk817_restart_dac_digital_clk_and_apll(component);
-		else
-			rk817_restart_adc_digital_clk_and_apll(component);
+		if (ret < 0)
+			return ret;
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			ret = rk817_restart_dac_digital_clk_and_apll(component);
+			if (ret < 0)
+				return ret;
+		} else {
+			ret = rk817_restart_adc_digital_clk_and_apll(component);
+			if (ret < 0)
+				return ret;
+		}
 	}
 
-	switch (params_format(params)) {
-	case SNDRV_PCM_FORMAT_S16_LE:
-		snd_soc_component_write(component, RK817_CODEC_DI2S_RXCR2,
-					VDW_RX_16BITS);
-		snd_soc_component_write(component, RK817_CODEC_DI2S_TXCR2,
-					VDW_TX_16BITS);
-		break;
-	case SNDRV_PCM_FORMAT_S24_LE:
-	case SNDRV_PCM_FORMAT_S32_LE:
-		snd_soc_component_write(component, RK817_CODEC_DI2S_RXCR2,
-					VDW_RX_24BITS);
-		snd_soc_component_write(component, RK817_CODEC_DI2S_TXCR2,
-					VDW_TX_24BITS);
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
+	ret = snd_soc_component_write(component, RK817_CODEC_DI2S_RXCR2, rx_width);
+	if (ret < 0)
+		return ret;
+	ret = snd_soc_component_write(component, RK817_CODEC_DI2S_TXCR2, tx_width);
+	return ret < 0 ? ret : 0;
 }
 
 static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
@@ -1092,40 +1592,70 @@ static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
 	struct snd_soc_component *component = dai->component;
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
 
+	int ret;
+
+	/* Reject the direction before GPIO or register operations. */
+	if (stream != SNDRV_PCM_STREAM_PLAYBACK)
+		return -EINVAL;
+	if (rk817->playback_path == OFF)
+		mute = 1;
+	if (!mute && rk817->mute_io_error)
+		return rk817->mute_io_error;
+
 	DBG("%s %d\n", __func__, mute);
 
 	if (mute) {
 		rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 0);
 		rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 0);
 
-		snd_soc_component_update_bits(component,
-					      RK817_CODEC_DDAC_MUTE_MIXCTL,
-					      DACMT_ENABLE, DACMT_ENABLE);
-		rk817_restart_dac_digital_clk(component);
-		snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
-					      I2SRX_EN_MASK, I2SRX_DIS);
+		ret = snd_soc_component_update_bits(component,
+					    RK817_CODEC_DDAC_MUTE_MIXCTL,
+					    DACMT_ENABLE, DACMT_ENABLE);
+		if (ret < 0) {
+			if (!rk817->mute_io_error)
+				rk817->mute_io_error = ret;
+		} else {
+			ret = rk817_restart_dac_digital_clk(component);
+			if (ret < 0 && !rk817->mute_io_error)
+				rk817->mute_io_error = ret;
+		}
+		/* Disable RX even if mute or clock restart failed. */
+		ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+					    I2SRX_EN_MASK, I2SRX_DIS);
+		if (ret < 0 && !rk817->mute_io_error)
+			rk817->mute_io_error = ret;
 	} else {
-		snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+		ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
 					      I2SRX_EN_MASK, I2SRX_EN);
-		snd_soc_component_update_bits(component,
+		if (ret < 0)
+			goto err_mute;
+		ret = snd_soc_component_update_bits(component,
 					      RK817_CODEC_DDAC_MUTE_MIXCTL,
 					      DACMT_ENABLE, DACMT_DISABLE);
+		if (ret < 0)
+			goto err_mute;
 
 		switch (rk817->playback_path) {
 		case SPK_PATH:
 		case RING_SPK:
 			if (rk817->out_l2spk_r2hp) {
-				snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+				ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
 						PWD_DACBIAS_ON | PWD_DACD_ON |
 						PWD_DACL_ON | PWD_DACR_ON);
+				if (ret < 0)
+					goto err_mute;
 			} else if (!rk817->use_ext_amplifier) {
-				snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+				ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
 						PWD_DACBIAS_ON | PWD_DACD_ON |
 						PWD_DACL_DOWN | PWD_DACR_DOWN);
+				if (ret < 0)
+					goto err_mute;
 			} else {
-				snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+				ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
 						PWD_DACBIAS_ON | PWD_DACD_DOWN |
 						PWD_DACL_ON | PWD_DACR_ON);
+				if (ret < 0)
+					goto err_mute;
 			}
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 1);
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 0);
@@ -1134,17 +1664,21 @@ static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
 		case HP_NO_MIC:
 		case RING_HP:
 		case RING_HP_NO_MIC:
-			snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+			ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
 					PWD_DACBIAS_ON | PWD_DACD_DOWN |
 					PWD_DACL_ON | PWD_DACR_ON);
+			if (ret < 0)
+				goto err_mute;
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 0);
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
 			break;
 		case SPK_HP:
 		case RING_SPK_HP:
-			snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+			ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
 					PWD_DACBIAS_ON | PWD_DACD_ON |
 					PWD_DACL_ON | PWD_DACR_ON);
+			if (ret < 0)
+				goto err_mute;
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 1);
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
 			break;
@@ -1153,29 +1687,48 @@ static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
 		}
 	}
 
-	return 0;
+	return rk817->mute_io_error;
+
+err_mute:
+	if (!rk817->mute_io_error)
+		rk817->mute_io_error = ret;
+	/* One bounded checked mute attempt; cleanup cannot erase the first error. */
+	rk817_digital_mute_dac(dai, 1, stream);
+	return rk817->mute_io_error;
 }
 
 static int rk817_digital_mute_adc(struct snd_soc_dai *dai, int mute, int stream)
 {
 	struct snd_soc_component *component = dai->component;
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+	int ret;
 
-	if (mute)
-		snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
-					      I2STX_EN_MASK, I2STX_DIS);
-	else
-		snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
-					      I2STX_EN_MASK, I2STX_EN);
+	if (stream != SNDRV_PCM_STREAM_CAPTURE)
+		return -EINVAL;
+	if (rk817->capture_path == MIC_OFF)
+		mute = 1;
+	if (!mute && rk817->mute_io_error)
+		return rk817->mute_io_error;
 
-	return 0;
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+					    I2STX_EN_MASK, mute ? I2STX_DIS : I2STX_EN);
+	if (ret < 0) {
+		if (!rk817->mute_io_error)
+			rk817->mute_io_error = ret;
+		if (!mute)
+			rk817_digital_mute_adc(dai, 1, stream);
+	}
+
+	return rk817->mute_io_error;
 }
 
 static int rk817_digital_mute(struct snd_soc_dai *dai, int mute, int stream)
 {
 	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
 		return rk817_digital_mute_dac(dai, mute, stream);
-	else
+	if (stream == SNDRV_PCM_STREAM_CAPTURE)
 		return rk817_digital_mute_adc(dai, mute, stream);
+	return -EINVAL;
 }
 
 #define RK817_PLAYBACK_RATES (SNDRV_PCM_RATE_8000 |\
@@ -1193,7 +1746,6 @@ static int rk817_digital_mute(struct snd_soc_dai *dai, int mute, int stream)
 			      SNDRV_PCM_RATE_96000)
 
 #define RK817_FORMATS (SNDRV_PCM_FMTBIT_S16_LE |\
-			SNDRV_PCM_FMTBIT_S20_3LE |\
 			SNDRV_PCM_FMTBIT_S24_LE |\
 			SNDRV_PCM_FMTBIT_S32_LE)
 
@@ -1222,6 +1774,363 @@ static struct snd_soc_dai_ops rk817_dai_ops = {
 	.set_sysclk	= rk817_set_dai_sysclk,
 	.mute_stream	= rk817_digital_mute,
 	.shutdown	= rk817_codec_shutdown,
+};
+
+static int rk817_shared_startup(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	int ret;
+
+	if (!rk817->shared_params_enabled || dai->id != RK817_HIFI ||
+	    (ss->stream != 0 && ss->stream != 1))
+		return -EINVAL;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->shutdown_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	ret = rk817->params_error;
+	if (!ret && (rk817->shared_params.pending || rk817->shared_open[ss->stream]))
+		ret = -EBUSY;
+	if (!ret)
+		rk817->shared_open[ss->stream] = ss;
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static int rk817_shared_begin(struct snd_pcm_substream *ss,
+		struct snd_pcm_hw_params *params, struct snd_soc_dai *dai, u64 *cookie)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	int ret;
+
+	if (!rk817->shared_params_enabled || dai->id != RK817_HIFI ||
+	    (ss->stream != 0 && ss->stream != 1) || params_rate(params) != 48000 ||
+	    params_channels(params) != 2 || params_format(params) != SNDRV_PCM_FORMAT_S16_LE ||
+	    rk817->pdmdata_out_enable || rk817->adc_for_loopback)
+		return -EINVAL;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	ret = rk817->params_error;
+	if (!ret && (rk817->shared_open[ss->stream] != ss ||
+	    rk817->shared_dai_fmt != (SND_SOC_DAIFMT_CBS_CFS |
+		SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S)))
+		ret = -EINVAL;
+	if (!ret)
+		ret = snd_soc_dai_params_begin_locked(p, dai, ss, cookie);
+	if (!ret)
+		p->old_clock[0] = rk817->stereo_sysclk;
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static int rk817_shared_reuse(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	int ret;
+
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	ret = rk817->shared_params.pending == ss ? rk817->shared_params.reuse : -EINVAL;
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static void rk817_shared_abort(struct snd_pcm_substream *ss, struct snd_soc_dai *dai,
+			       u64 cookie, int first_error, bool shared_io_possible)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return;
+	}
+	if (snd_soc_dai_params_abort_locked(p, dai, ss, cookie)) {
+		rk817->stereo_sysclk = p->old_clock[0];
+		if (shared_io_possible && !rk817->params_error)
+			rk817->params_error = first_error < 0 ? first_error : -EIO;
+	}
+	mutex_unlock(&rk817->params_lock);
+}
+
+static int rk817_shared_commit(struct snd_pcm_substream *ss,
+				struct snd_soc_dai *dai, u64 cookie)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	int ret;
+
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	if (!cookie || p->cookie != cookie || p->pending != ss ||
+	    p->transaction != ss || !p->undo) {
+		mutex_unlock(&rk817->params_lock);
+		return -EINVAL; /* Duplicate/stale commit cannot undo a committed owner. */
+	}
+	ret = rk817->params_error;
+	if (!ret)
+		ret = snd_soc_dai_params_commit_locked(p, dai, ss, cookie);
+	if (!ret)
+		rk817->stereo_sysclk = 12288000;
+	else if (snd_soc_dai_params_abort_locked(p, dai, ss, cookie))
+		rk817->stereo_sysclk = p->old_clock[0];
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static void rk817_shared_fault(struct snd_soc_dai *dai, int first_errno)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return;
+	}
+	if (!rk817->params_error)
+		rk817->params_error = first_errno < 0 ? first_errno : -EIO;
+	mutex_unlock(&rk817->params_lock);
+}
+
+static int rk817_shared_free_check(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	int ret = 0;
+
+	if (dai->id != RK817_HIFI || (ss->stream != 0 && ss->stream != 1))
+		return -EINVAL;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	if (p->pending)
+		ret = -EBUSY;
+	else if ((p->owner[ss->stream] && p->owner[ss->stream] != ss) ||
+		 rk817->shared_open[ss->stream] != ss)
+		ret = -EINVAL;
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static int rk817_shared_free(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	int ret;
+
+	if (dai->id != RK817_HIFI)
+		return -EINVAL;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	ret = snd_soc_dai_params_free_locked(&rk817->shared_params, dai, ss);
+	/* Keep sticky params_error and the separately owned MCLK lease/request. */
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static int rk817_shared_sysclk(struct snd_soc_dai *dai, int clk_id,
+				unsigned int freq, int dir)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	int ret = 0;
+
+	if (dai->id != RK817_HIFI || clk_id != 0 ||
+	    (dir != SND_SOC_CLOCK_IN && dir != SND_SOC_CLOCK_OUT) ||
+	    (!freq && dir != SND_SOC_CLOCK_IN))
+		return -EINVAL;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	if (rk817->params_error)
+		ret = rk817->params_error;
+	else if (p->pending || p->owner[0] || p->owner[1])
+		/* Value validation only; this setter has no owner identity parameter. */
+		ret = freq == 12288000 ? 0 : -EINVAL;
+	else if (freq)
+		ret = freq == 12288000 ? 0 : -EINVAL;
+	else if (snd_soc_dai_active(dai))
+		ret = -EINVAL;
+	else
+		rk817->stereo_sysclk = 0;
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static int rk817_shared_hw_params(struct snd_pcm_substream *ss,
+		struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	int ret;
+
+	if (dai->id != RK817_HIFI || (ss->stream != 0 && ss->stream != 1) ||
+	    params_rate(params) != 48000 || params_channels(params) != 2 ||
+	    params_format(params) != SNDRV_PCM_FORMAT_S16_LE)
+		return -EINVAL;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	ret = rk817->params_error;
+	if (!ret && (p->pending != ss || !p->undo || p->applied))
+		ret = -EBUSY;
+	if (!ret) {
+		p->applied = true;
+		/* Whole real RK817 PLL/width/rate function only for first configuration. */
+		if (!p->reuse)
+			ret = rk817_hw_params(ss, params, dai);
+	}
+	if (ret < 0 && p->pending == ss && p->applied && !p->reuse && !rk817->params_error)
+		rk817->params_error = ret;
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static int rk817_shared_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	int ret;
+
+	if (dai->id != RK817_HIFI ||
+	    fmt != (SND_SOC_DAIFMT_CBS_CFS | SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S))
+		return -EINVAL;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	ret = rk817->params_error;
+	if (!ret && rk817->shared_dai_fmt == fmt)
+		ret = 0;
+	else if (!ret && (p->pending || p->owner[0] || p->owner[1]))
+		ret = -EBUSY;
+	else if (!ret) {
+		ret = rk817_set_dai_fmt(dai, fmt);
+		if (!ret)
+			rk817->shared_dai_fmt = fmt;
+		else if (!rk817->params_error)
+			rk817->params_error = ret;
+	}
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+/* mute_stream has no substream argument; use the independently held open slot. */
+static int rk817_shared_mute(struct snd_soc_dai *dai, int mute, int stream)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	int ret;
+
+	if (dai->id != RK817_HIFI || (stream != 0 && stream != 1))
+		return -EINVAL;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	if (!rk817->shared_open[stream])
+		ret = -EINVAL;
+	else if (p->pending)
+		ret = -EBUSY;
+	else if (!mute && (rk817->params_error || rk817->mute_io_error))
+		ret = rk817->params_error ? rk817->params_error : rk817->mute_io_error;
+	else if (!mute && p->owner[stream] != rk817->shared_open[stream])
+		ret = -EINVAL;
+	else {
+		/* Post-HW_FREE mute still owns the open, even after its params owner left. */
+		ret = rk817_digital_mute(dai, mute, stream);
+		if (ret < 0 && !rk817->params_error)
+			rk817->params_error = ret;
+	}
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static int rk817_shared_capture_shutdown(struct snd_soc_component *component)
+{
+	int first, ret;
+
+	first = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+					      I2STX_CKE_EN, I2STX_CKE_EN);
+	usleep_range(1000, 1100);
+	/* Try to clear this direction's bit even if the first update failed. */
+	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+					    I2STX_CKE_EN, I2STX_CKE_DIS);
+	return first < 0 ? first : (ret < 0 ? ret : 0);
+}
+
+static void rk817_shared_shutdown(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
+	int ret;
+
+	if (dai->id != RK817_HIFI || (ss->stream != 0 && ss->stream != 1))
+		return;
+	mutex_lock(&rk817->params_lock);
+	if (rk817->terminal_started) {
+		mutex_unlock(&rk817->params_lock);
+		return;
+	}
+	if (rk817->shared_open[ss->stream] != ss)
+		goto out; /* Failed startup or a repeated close owns no open slot. */
+	ret = snd_soc_dai_params_free_locked(&rk817->shared_params, dai, ss);
+	if (ret < 0) {
+		if (!rk817->params_error)
+			rk817->params_error = ret;
+		goto out;
+	}
+	if (ss->stream == SNDRV_PCM_STREAM_CAPTURE) {
+		/* Masked ADC output pulse does not alter a peer's DAC/PLL/rate bits. */
+		ret = rk817_shared_capture_shutdown(dai->component);
+		if (ret < 0 && !rk817->params_error)
+			rk817->params_error = ret;
+	}
+	rk817->shared_open[ss->stream] = NULL;
+out:
+	/* This void callback records first errno but cannot return it to close(). */
+	mutex_unlock(&rk817->params_lock);
+}
+
+static const struct snd_soc_dai_ops rk817_shared_dai_ops = {
+	.startup = rk817_shared_startup,
+	.hw_params = rk817_shared_hw_params,
+	.hw_free = rk817_shared_free,
+	.set_fmt = rk817_shared_set_fmt,
+	.set_sysclk = rk817_shared_sysclk,
+	.mute_stream = rk817_shared_mute,
+	.shutdown = rk817_shared_shutdown,
+	.hw_params_begin = rk817_shared_begin,
+	.hw_params_commit = rk817_shared_commit,
+	.hw_params_abort = rk817_shared_abort,
+	.hw_params_reuse = rk817_shared_reuse,
+	.hw_params_free_check = rk817_shared_free_check,
+	.hw_params_fault = rk817_shared_fault,
 };
 
 static struct snd_soc_dai_driver rk817_dai[] = {
@@ -1268,6 +2177,16 @@ static struct snd_soc_dai_driver rk817_dai[] = {
 
 static int rk817_suspend(struct snd_soc_component *component)
 {
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+
+	if (rk817->shared_params_enabled) {
+		int ret;
+
+		mutex_lock(&rk817->params_lock);
+		ret = rk817->terminal_started ? -ESHUTDOWN : -EOPNOTSUPP;
+		mutex_unlock(&rk817->params_lock);
+		return ret;
+	}
 	rk817_codec_power_down(component, RK817_CODEC_ALL);
 	return 0;
 }
@@ -1275,6 +2194,15 @@ static int rk817_suspend(struct snd_soc_component *component)
 static int rk817_resume(struct snd_soc_component *component)
 {
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+
+	if (rk817->shared_params_enabled) {
+		int ret;
+
+		mutex_lock(&rk817->params_lock);
+		ret = rk817->terminal_started ? -ESHUTDOWN : -EOPNOTSUPP;
+		mutex_unlock(&rk817->params_lock);
+		return ret;
+	}
 
 	if (rk817->resume_path) {
 		if (rk817->capture_path != MIC_OFF)
@@ -1286,39 +2214,218 @@ static int rk817_resume(struct snd_soc_component *component)
 	return 0;
 }
 
+/* A void teardown callback cannot stop devres release by returning errno. */
+static void rk817_shared_failstop(const char *operation, int first_errno)
+{
+	WRITE_ONCE(panic_timeout, 0);
+	panic("rk817-codec: %s unsafe codec destruction (%d)", operation, first_errno);
+}
+
+/* Called after ASoC file drain, or with no bound card/component borrow.
+ * params_lock then drains local checked bodies before terminal I/O/lease release.
+ */
+static void rk817_shared_quiesce(struct rk817_codec_priv *rk817, const char *operation)
+{
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	int ret = 0;
+
+	mutex_lock(&rk817->params_lock);
+	rk817->terminal_started = true;
+	if (rk817->terminal_done)
+		goto out;
+	if (rk817->params_error)
+		ret = rk817->params_error;
+	else if (rk817->mute_io_error)
+		ret = rk817->mute_io_error;
+	else if (p->pending || p->owner[0] || p->owner[1] ||
+		 rk817->shared_open[0] || rk817->shared_open[1])
+		ret = -EBUSY;
+	else if (rk817->retained_clock[0] || rk817->retained_clock[1] ||
+		 rk817->clk_playback > 1 || rk817->clk_capture > 1 ||
+		 (rk817->component && (!rk817->probe_clock_owned || !rk817->clk_lock_initialized)) ||
+		 (!rk817->component && (rk817->probe_clock_owned || rk817->clk_playback || rk817->clk_capture)))
+		ret = -EIO;
+	if (ret < 0) {
+		if (!rk817->params_error)
+			rk817->params_error = ret;
+		rk817_shared_failstop(operation, rk817->params_error);
+	}
+	if (!rk817->component) {
+		rk817->terminal_done = true; /* An unprobed instance owns no codec/clock borrow. */
+		goto out;
+	}
+	ret = rk817_shared_power_down(rk817->component, RK817_CODEC_ALL);
+	if (ret < 0) {
+		rk817->params_error = ret;
+		rk817_shared_failstop(operation, ret);
+	}
+	mutex_lock(&rk817->clk_lock);
+	if (rk817->clk_playback)
+		clk_disable_unprepare(rk817->mclk);
+	if (rk817->clk_capture)
+		clk_disable_unprepare(rk817->mclk);
+	if (rk817->probe_clock_owned)
+		clk_disable_unprepare(rk817->mclk);
+	rk817->clk_playback = 0;
+	rk817->clk_capture = 0;
+	rk817->probe_clock_owned = false;
+	rk817->playback_path = OFF;
+	rk817->capture_path = MIC_OFF;
+	mutex_unlock(&rk817->clk_lock);
+	rk817->terminal_done = true;
+out:
+	mutex_unlock(&rk817->params_lock);
+}
+
+/* This check is not a PCM drain: release remains allowed until core disconnect. */
+static int rk817_shared_terminal_check(struct rk817_codec_priv *rk817, bool shutdown)
+{
+	int ret = 0;
+
+	mutex_lock(&rk817->params_lock);
+	if (rk817->params_error)
+		ret = rk817->params_error;
+	else if (rk817->mute_io_error)
+		ret = rk817->mute_io_error;
+	else if (rk817->retained_clock[0] || rk817->retained_clock[1] ||
+		 rk817->clk_playback > 1 || rk817->clk_capture > 1)
+		ret = -EIO;
+	if (ret < 0 && !rk817->params_error)
+		rk817->params_error = ret;
+	if (!ret && shutdown)
+		rk817->shutdown_started = true;
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
+static int rk817_shared_probe(struct snd_soc_component *component)
+{
+	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+	struct snd_soc_dai_params_state *p = &rk817->shared_params;
+	unsigned int chip_name, chip_ver;
+	int ret, cleanup;
+
+	mutex_lock(&rk817->params_lock);
+	if (rk817->shutdown_started) {
+		mutex_unlock(&rk817->params_lock);
+		return -ESHUTDOWN;
+	}
+	if (rk817->params_error || rk817->mute_io_error || rk817->retained_clock[0] ||
+	    rk817->retained_clock[1] || p->pending || p->owner[0] || p->owner[1] ||
+	    rk817->shared_open[0] || rk817->shared_open[1]) {
+		ret = rk817->params_error ? rk817->params_error : -EBUSY;
+		goto out;
+	}
+	if (rk817->component || rk817->probe_clock_owned || rk817->clk_playback ||
+	    rk817->clk_capture || rk817->clk_lock_initialized ||
+	    (rk817->terminal_started && !rk817->terminal_done)) {
+		ret = -EBUSY;
+		goto out;
+	}
+	/* Only a fully detached healthy instance can begin a new component lifetime. */
+	rk817->terminal_started = false;
+	rk817->terminal_done = false;
+	mutex_init(&rk817->clk_lock);
+	rk817->clk_lock_initialized = true;
+	snd_soc_component_init_regmap(component, rk817->regmap);
+	rk817->component = component;
+	ret = regmap_read(rk817->regmap, RK817_PMIC_CHIP_NAME, &chip_name);
+	if (ret < 0)
+		goto detach;
+	ret = regmap_read(rk817->regmap, RK817_PMIC_CHIP_VER, &chip_ver);
+	if (ret < 0)
+		goto detach;
+	rk817->chip_ver = chip_ver & 0x0f;
+	ret = clk_prepare_enable(rk817->mclk);
+	if (ret < 0)
+		goto detach;
+	rk817->probe_clock_owned = true;
+	ret = rk817_reset(component);
+	if (ret < 0) {
+		rk817->params_error = ret;
+		rk817_shared_failstop("probe reset", ret);
+	}
+	ret = snd_soc_add_component_controls(component, rk817_snd_path_controls,
+					     ARRAY_SIZE(rk817_snd_path_controls));
+	if (ret < 0) {
+		cleanup = rk817_shared_power_down(component, RK817_CODEC_ALL);
+		if (cleanup < 0) {
+			/* The controls failure remains first; cleanup cannot establish recovery. */
+			rk817->params_error = ret;
+			rk817_shared_failstop("probe controls cleanup", ret);
+		}
+		mutex_lock(&rk817->clk_lock);
+		clk_disable_unprepare(rk817->mclk);
+		rk817->probe_clock_owned = false;
+		mutex_unlock(&rk817->clk_lock);
+		goto detach;
+	}
+	ret = 0;
+	goto out;
+detach:
+	component->regmap = NULL;
+	rk817->component = NULL;
+	mutex_destroy(&rk817->clk_lock);
+	rk817->clk_lock_initialized = false;
+out:
+	mutex_unlock(&rk817->params_lock);
+	return ret;
+}
+
 static int rk817_probe(struct snd_soc_component *component)
 {
 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
-	int chip_name = 0;
-	int chip_ver = 0;
+	unsigned int chip_name;
+	unsigned int chip_ver;
+	int ret;
 
-	DBG("%s\n", __func__);
-
-	if (!rk817) {
-		dev_err(component->dev, "%s : rk817 priv is NULL!\n",
-			__func__);
+	if (!rk817)
 		return -EINVAL;
-	}
+	if (rk817->shared_params_enabled)
+		return rk817_shared_probe(component);
+
+    /* The parent PMIC owns this map; the component only borrows it. */
 	snd_soc_component_init_regmap(component, rk817->regmap);
 	rk817->component = component;
 	rk817->playback_path = OFF;
 	rk817->capture_path = MIC_OFF;
-
-	chip_name = snd_soc_component_read(component, RK817_PMIC_CHIP_NAME);
-	chip_ver = snd_soc_component_read(component, RK817_PMIC_CHIP_VER);
-	rk817->chip_ver = (chip_ver & 0x0f);
-	dev_info(component->dev, "%s: chip_name:0x%x, chip_ver:0x%x\n", __func__, chip_name, chip_ver);
-
-	/* always enable mclk, and will disable mclk in rk817_remove */
-	clk_prepare_enable(rk817->mclk);
-	rk817_reset(component);
-	mutex_init(&rk817->clk_lock);
 	rk817->clk_capture = 0;
 	rk817->clk_playback = 0;
 
-	snd_soc_add_component_controls(component, rk817_snd_path_controls,
-				       ARRAY_SIZE(rk817_snd_path_controls));
+	ret = regmap_read(rk817->regmap, RK817_PMIC_CHIP_NAME, &chip_name);
+	if (ret < 0)
+		goto err_detach_regmap;
+	ret = regmap_read(rk817->regmap, RK817_PMIC_CHIP_VER, &chip_ver);
+	if (ret < 0)
+		goto err_detach_regmap;
+	rk817->chip_ver = chip_ver & 0x0f;
+	dev_info(component->dev, "%s: chip_name:0x%x, chip_ver:0x%x\n",
+		 __func__, chip_name, chip_ver);
+
+	/* Hold this clock reference until remove, or undo it on probe failure. */
+	ret = clk_prepare_enable(rk817->mclk);
+	if (ret < 0)
+		goto err_detach_regmap;
+	ret = rk817_reset(component);
+	if (ret < 0)
+		goto err_disable_clock;
+
+	mutex_init(&rk817->clk_lock);
+	ret = snd_soc_add_component_controls(component, rk817_snd_path_controls,
+					     ARRAY_SIZE(rk817_snd_path_controls));
+	if (ret < 0)
+		goto err_destroy_mutex;
 	return 0;
+
+err_destroy_mutex:
+	mutex_destroy(&rk817->clk_lock);
+err_disable_clock:
+	clk_disable_unprepare(rk817->mclk);
+err_detach_regmap:
+    /* The PMIC also uses this map; detach without releasing its ownership. */
+	component->regmap = NULL;
+	rk817->component = NULL;
+	return ret;
 }
 
 /* power down chip */
@@ -1333,8 +2440,23 @@ static void rk817_remove(struct snd_soc_component *component)
 		return;
 	}
 
+	if (rk817->shared_params_enabled) {
+		rk817_shared_quiesce(rk817, "component remove");
+		mutex_lock(&rk817->params_lock);
+		component->regmap = NULL;
+		rk817->component = NULL;
+		if (rk817->clk_lock_initialized) {
+			mutex_destroy(&rk817->clk_lock);
+			rk817->clk_lock_initialized = false;
+		}
+		mutex_unlock(&rk817->params_lock);
+		return;
+	}
+
 	rk817_codec_power_down(component, RK817_CODEC_ALL);
-	snd_soc_component_exit_regmap(component);
+	/* The parent PMIC retains ownership of its regmap. */
+	component->regmap = NULL;
+	rk817->component = NULL;
 	mutex_destroy(&rk817->clk_lock);
 	clk_disable_unprepare(rk817->mclk);
 	mdelay(10);
@@ -1373,8 +2495,16 @@ static int rk817_codec_parse_dt_property(struct device *dev,
 		return -ENODEV;
 	}
 
+	rk817->shared_params_enabled = of_property_read_bool(node,
+						  "rockchip,checked-shared-params-48k");
+
 	rk817->hp_ctl_gpio = devm_gpiod_get_optional(dev, "hp-ctl",
 						  GPIOD_OUT_LOW);
+	if (IS_ERR(rk817->hp_ctl_gpio)) {
+		ret = PTR_ERR(rk817->hp_ctl_gpio);
+		rk817->hp_ctl_gpio = NULL;
+		goto out_put_node;
+	}
 	if (!IS_ERR_OR_NULL(rk817->hp_ctl_gpio)) {
 		DBG("%s : hp-ctl-gpio %d\n", __func__,
 		    desc_to_gpio(rk817->hp_ctl_gpio));
@@ -1382,6 +2512,11 @@ static int rk817_codec_parse_dt_property(struct device *dev,
 
 	rk817->spk_ctl_gpio = devm_gpiod_get_optional(dev, "spk-ctl",
 						  GPIOD_OUT_LOW);
+	if (IS_ERR(rk817->spk_ctl_gpio)) {
+		ret = PTR_ERR(rk817->spk_ctl_gpio);
+		rk817->spk_ctl_gpio = NULL;
+		goto out_put_node;
+	}
 	if (!IS_ERR_OR_NULL(rk817->spk_ctl_gpio)) {
 		DBG("%s : spk-ctl-gpio %d\n", __func__,
 		    desc_to_gpio(rk817->spk_ctl_gpio));
@@ -1445,27 +2580,17 @@ static int rk817_codec_parse_dt_property(struct device *dev,
 	rk817->adc_for_loopback =
 			of_property_read_bool(node, "adc-for-loopback");
 
-	return 0;
+	ret = 0;
+out_put_node:
+	of_node_put(node);
+	return ret;
 }
-
-static const struct regmap_config rk817_codec_regmap_config = {
-	.name = "rk817-codec",
-	.reg_bits = 8,
-	.val_bits = 8,
-	.reg_stride = 1,
-	.max_register = 0xfe,
-	.cache_type = REGCACHE_FLAT,
-	.volatile_reg = rk817_volatile_register,
-	.writeable_reg = rk817_codec_register,
-	.readable_reg = rk817_codec_register,
-	.reg_defaults = rk817_reg_defaults,
-	.num_reg_defaults = ARRAY_SIZE(rk817_reg_defaults),
-};
 
 static int rk817_platform_probe(struct platform_device *pdev)
 {
 	struct rk808 *rk817 = dev_get_drvdata(pdev->dev.parent);
 	struct rk817_codec_priv *rk817_codec_data;
+	struct snd_soc_dai_driver *dais = rk817_dai;
 	int ret;
 
 	DBG("%s\n", __func__);
@@ -1481,6 +2606,7 @@ static int rk817_platform_probe(struct platform_device *pdev)
 	if (!rk817_codec_data)
 		return -ENOMEM;
 
+	mutex_init(&rk817_codec_data->params_lock);
 	platform_set_drvdata(pdev, rk817_codec_data);
 
 	ret = rk817_codec_parse_dt_property(&pdev->dev, rk817_codec_data);
@@ -1490,24 +2616,36 @@ static int rk817_platform_probe(struct platform_device *pdev)
 		goto err_;
 	}
 
-	rk817_codec_data->regmap = devm_regmap_init_i2c(rk817->i2c,
-					    &rk817_codec_regmap_config);
-	if (IS_ERR(rk817_codec_data->regmap)) {
-		ret = PTR_ERR(rk817_codec_data->regmap);
-		dev_err(&pdev->dev, "failed to allocate register map: %d\n",
-			ret);
-		goto err_;
-	}
-
 	rk817_codec_data->mclk = devm_clk_get(&pdev->dev, "mclk");
 	if (IS_ERR(rk817_codec_data->mclk)) {
-		dev_err(&pdev->dev, "Unable to get mclk\n");
-		ret = -ENXIO;
+		ret = PTR_ERR(rk817_codec_data->mclk);
+		dev_err(&pdev->dev, "Unable to get mclk: %d\n", ret);
 		goto err_;
 	}
 
+    /* Borrow the MFD's original map; never create a second I2C lookup. */
+    rk817_codec_data->regmap = rk817->regmap;
+	if (IS_ERR(rk817_codec_data->regmap)) {
+		ret = PTR_ERR(rk817_codec_data->regmap);
+        goto err_;
+    }
+    if (!rk817_codec_data->regmap) {
+        ret = -ENODEV;
+        goto err_;
+    }
+
+	if (rk817_codec_data->shared_params_enabled) {
+		dais = devm_kmemdup(&pdev->dev, rk817_dai, sizeof(rk817_dai), GFP_KERNEL);
+		if (!dais) {
+			ret = -ENOMEM;
+			goto err_;
+		}
+		/* Hifi and voice share the state; checked voice entrypoints reject id. */
+		dais[0].ops = &rk817_shared_dai_ops;
+		dais[1].ops = &rk817_shared_dai_ops;
+	}
 	ret = devm_snd_soc_register_component(&pdev->dev, &soc_codec_dev_rk817,
-					      rk817_dai, ARRAY_SIZE(rk817_dai));
+					      dais, ARRAY_SIZE(rk817_dai));
 	if (ret < 0) {
 		dev_err(&pdev->dev, "%s() register codec error %d\n",
 			__func__, ret);
@@ -1516,22 +2654,48 @@ static int rk817_platform_probe(struct platform_device *pdev)
 
 	return 0;
 err_:
-
+	platform_set_drvdata(pdev, NULL);
 	return ret;
 }
 
 static int rk817_platform_remove(struct platform_device *pdev)
 {
-	snd_soc_unregister_component(&pdev->dev);
+	struct rk817_codec_priv *rk817 = dev_get_drvdata(&pdev->dev);
+	int ret;
 
+	if (rk817 && rk817->shared_params_enabled) {
+		ret = rk817_shared_terminal_check(rk817, false);
+		if (ret < 0)
+			rk817_shared_failstop("platform remove", ret);
+	}
+	/* Actual core cleanup disconnects/drains files before component.remove. */
+	snd_soc_unregister_component(&pdev->dev);
 	return 0;
 }
 
 static void rk817_platform_shutdown(struct platform_device *pdev)
 {
 	struct rk817_codec_priv *rk817 = dev_get_drvdata(&pdev->dev);
+	int ret;
 
-	DBG("%s\n", __func__);
+	if (rk817 && rk817->shared_params_enabled) {
+		ret = rk817_shared_terminal_check(rk817, true);
+		if (ret < 0)
+			rk817_shared_failstop("platform shutdown", ret);
+		/* No private lock is held while core waits for complete PCM release. */
+		ret = snd_soc_component_shutdown_card(&pdev->dev, &soc_codec_dev_rk817, 5000);
+		if (ret < 0) {
+			mutex_lock(&rk817->params_lock);
+			if (!rk817->params_error)
+				rk817->params_error = ret;
+			ret = rk817->params_error;
+			mutex_unlock(&rk817->params_lock);
+			rk817_shared_failstop("platform shutdown drain", ret);
+		}
+		/* Bound card removal already did this; unbound/unprobed is idempotent. */
+		rk817_shared_quiesce(rk817, "platform shutdown complete");
+		return;
+	}
 
 	if (rk817 && rk817->component)
 		rk817_codec_power_down(rk817->component, RK817_CODEC_ALL);

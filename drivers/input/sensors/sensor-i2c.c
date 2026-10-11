@@ -54,10 +54,7 @@ static int sensor_i2c_write(struct i2c_adapter *i2c_adap,
 	res = i2c_transfer(i2c_adap, msgs, 1);
 	if (res == 1)
 		return 0;
-	else if(res == 0)
-		return -EBUSY;
-	else
-		return res;
+	return res < 0 ? res : -EIO;
 
 }
 
@@ -86,10 +83,7 @@ static int senosr_i2c_read(struct i2c_adapter *i2c_adap,
 	res = i2c_transfer(i2c_adap, msgs, 2);
 	if (res == 2)
 		return 0;
-	else if(res == 0)
-		return -EBUSY;
-	else
-		return res;
+	return res < 0 ? res : -EIO;
 
 }
 
@@ -156,7 +150,10 @@ int sensor_read_reg(struct i2c_client *client, int addr)
 	ret = sensor_rx_data(client, tmp, 1);
 	mutex_unlock(&sensor->i2c_mutex);
 
-	return tmp[0];
+	if (ret < 0)
+		return ret;
+
+	return (unsigned char)tmp[0];
 }
 
 EXPORT_SYMBOL(sensor_read_reg);
@@ -173,7 +170,7 @@ static int i2c_master_normal_recv(const struct i2c_client *client, char *buf, in
 	msg.buf = (char *)buf;
 	ret = i2c_transfer(adap, &msg, 1);
 
-		 return (ret == 1) ? count : ret;
+		 return ret == 1 ? count : (ret < 0 ? ret : -EIO);
 }
 
 static int i2c_master_normal_send(const struct i2c_client *client, const char *buf, int count, int scl_rate)
@@ -188,7 +185,7 @@ static int i2c_master_normal_send(const struct i2c_client *client, const char *b
 	msg.buf = (char *)buf;
 
 	ret = i2c_transfer(adap, &msg, 1);
-	return (ret == 1) ? count : ret;
+	return ret == 1 ? count : (ret < 0 ? ret : -EIO);
 }
 
 int sensor_tx_data_normal(struct i2c_client *client, char *buf, int num)
@@ -196,7 +193,7 @@ int sensor_tx_data_normal(struct i2c_client *client, char *buf, int num)
 	int ret = 0;
 	ret = i2c_master_normal_send(client, buf, num, SENSOR_I2C_RATE);
 
-	return (ret == num) ? 0 : ret;
+	return ret == num ? 0 : (ret < 0 ? ret : -EIO);
 }
 EXPORT_SYMBOL(sensor_tx_data_normal);
 
@@ -206,7 +203,7 @@ int sensor_rx_data_normal(struct i2c_client *client, char *buf, int num)
 	int ret = 0;
 	ret = i2c_master_normal_recv(client, buf, num, SENSOR_I2C_RATE);
 
-	return (ret == num) ? 0 : ret;
+	return ret == num ? 0 : (ret < 0 ? ret : -EIO);
 }
 
 EXPORT_SYMBOL(sensor_rx_data_normal);
@@ -238,7 +235,10 @@ int sensor_read_reg_normal(struct i2c_client *client)
 	ret = sensor_rx_data_normal(client, tmp, 1);
 	mutex_unlock(&sensor->i2c_mutex);
 
-	return tmp[0];
+	if (ret < 0)
+		return ret;
+
+	return (unsigned char)tmp[0];
 }
 
 EXPORT_SYMBOL(sensor_read_reg_normal);

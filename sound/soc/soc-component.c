@@ -816,35 +816,61 @@ int snd_soc_pcm_component_trigger(struct snd_pcm_substream *substream,
 {
 	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
 	struct snd_soc_component *component;
-	int i, ret;
+	bool starting = cmd == SNDRV_PCM_TRIGGER_START ||
+		cmd == SNDRV_PCM_TRIGGER_RESUME || cmd == SNDRV_PCM_TRIGGER_PAUSE_RELEASE;
+	bool stopping = cmd == SNDRV_PCM_TRIGGER_STOP ||
+		cmd == SNDRV_PCM_TRIGGER_SUSPEND || cmd == SNDRV_PCM_TRIGGER_PAUSE_PUSH;
+	int i, j, ret, first = 0;
 
 	for_each_rtd_components(rtd, i, component) {
-		if (component->driver->trigger) {
-			ret = component->driver->trigger(component, substream, cmd);
-			if (ret < 0)
-				return soc_component_ret(component, ret);
-		}
+		if (!(component->driver->trigger))
+			continue;
+		ret = component->driver->trigger(component, substream, cmd);
+		if (ret >= 0)
+			continue;
+		if (!first)
+			first = soc_component_ret(component, ret);
+		if (starting)
+			goto rollback;
+		if (!stopping)
+			return first;
 	}
+	return first;
 
-	return 0;
+rollback:
+	/* The failed member may have partially executed; later members are untouched.
+	 * STOP carries this substream so each callback keeps its own direction owner.
+	 */
+	for (j = i; j >= 0; j--) {
+		component = rtd->components[j];
+		if (component->driver->trigger)
+			component->driver->trigger(component, substream, SNDRV_PCM_TRIGGER_STOP);
+	}
+	return first;
 }
+
 
 int snd_soc_pcm_component_pm_runtime_get(struct snd_soc_pcm_runtime *rtd,
 					 void *stream)
 {
-	struct snd_soc_component *component;
-	int i, ret;
+	struct snd_soc_component *component, *previous;
+	int i, j, ret;
 
+	(void)stream;
 	for_each_rtd_components(rtd, i, component) {
 		ret = pm_runtime_get_sync(component->dev);
 		if (ret < 0 && ret != -EACCES) {
+			/* get_sync increments usage even when resume fails. */
 			pm_runtime_put_noidle(component->dev);
+			/* Each occurrence owns one reference, including repeated devices. */
+			for (j = 0; j < i; j++) {
+				previous = rtd->components[j];
+				pm_runtime_mark_last_busy(previous->dev);
+				pm_runtime_put_autosuspend(previous->dev);
+			}
 			return soc_component_ret(component, ret);
 		}
-		/* mark stream if succeeded */
-		soc_component_mark_push(component, stream, pm);
 	}
-
 	return 0;
 }
 
@@ -854,15 +880,12 @@ void snd_soc_pcm_component_pm_runtime_put(struct snd_soc_pcm_runtime *rtd,
 	struct snd_soc_component *component;
 	int i;
 
+	/* Callers reach here only after a full successful get for this call. */
+	(void)stream;
+	(void)rollback;
 	for_each_rtd_components(rtd, i, component) {
-		if (rollback && !soc_component_mark_match(component, stream, pm))
-			continue;
-
 		pm_runtime_mark_last_busy(component->dev);
 		pm_runtime_put_autosuspend(component->dev);
-
-		/* remove marked stream */
-		soc_component_mark_pop(component, stream, pm);
 	}
 }
 

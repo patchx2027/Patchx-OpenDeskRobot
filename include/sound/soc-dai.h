@@ -209,6 +209,18 @@ int snd_soc_dai_compr_get_metadata(struct snd_soc_dai *dai,
 				   struct snd_compr_stream *cstream,
 				   struct snd_compr_metadata *metadata);
 
+/* Fixed two-slot software ownership; callers hold their endpoint state lock. */
+struct snd_soc_dai_params_state {
+	struct snd_pcm_substream *owner[2];
+	struct snd_pcm_substream *pending;
+	struct snd_pcm_substream *transaction;
+	struct snd_pcm_substream *old_owner;
+	u64 generation, cookie;
+	unsigned int old_rate, old_channels, old_sample_bits;
+	unsigned int old_clock[2];
+	bool reuse, applied, undo;
+};
+
 struct snd_soc_dai_ops {
 	/*
 	 * DAI clocking configuration, all optional.
@@ -283,6 +295,19 @@ struct snd_soc_dai_ops {
 
 	/* bit field */
 	unsigned int no_capture_mute:1;
+
+	/* Optional whole-chain, explicitly opt-in parameter ownership transaction. */
+	int (*hw_params_begin)(struct snd_pcm_substream *, struct snd_pcm_hw_params *,
+			       struct snd_soc_dai *, u64 *cookie);
+	int (*hw_params_commit)(struct snd_pcm_substream *, struct snd_soc_dai *, u64 cookie);
+	void (*hw_params_abort)(struct snd_pcm_substream *, struct snd_soc_dai *,
+			       u64 cookie, int first_error, bool shared_io_possible);
+	int (*hw_params_reuse)(struct snd_pcm_substream *, struct snd_soc_dai *);
+	int (*hw_params_free_check)(struct snd_pcm_substream *, struct snd_soc_dai *);
+	void (*hw_params_fault)(struct snd_soc_dai *, int first_errno);
+	/* CPU-only atomic fault admission: no sleeping or codec callbacks. */
+	void (*pcm_async_fault)(struct snd_soc_dai *, int first_errno);
+
 };
 
 struct snd_soc_cdai_ops {
@@ -394,6 +419,121 @@ struct snd_soc_dai {
 	/* bit field */
 	unsigned int probed:1;
 };
+
+/* NULL hooks preserve legacy behavior; partial hooks never imply legacy. */
+static inline bool snd_soc_dai_hw_params_any(struct snd_soc_dai *dai)
+{
+	const struct snd_soc_dai_ops *ops = dai->driver->ops;
+
+	return ops && (ops->hw_params_begin || ops->hw_params_commit ||
+		       ops->hw_params_abort || ops->hw_params_reuse ||
+		       ops->hw_params_free_check || ops->hw_params_fault);
+}
+
+static inline bool snd_soc_dai_hw_params_managed(struct snd_soc_dai *dai)
+{
+	const struct snd_soc_dai_ops *ops = dai->driver->ops;
+
+	return ops && ops->hw_params_begin && ops->hw_params_commit &&
+		ops->hw_params_abort && ops->hw_params_reuse &&
+		ops->hw_params_free_check && ops->hw_params_fault && ops->hw_free;
+}
+
+static inline int snd_soc_dai_hw_params_reuse(struct snd_soc_dai *dai,
+					    struct snd_pcm_substream *substream)
+{
+	if (!snd_soc_dai_hw_params_managed(dai))
+		return -EINVAL;
+	return dai->driver->ops->hw_params_reuse(substream, dai);
+}
+
+static inline int snd_soc_dai_hw_params_release(struct snd_soc_dai *dai,
+					      struct snd_pcm_substream *substream)
+{
+	if (!snd_soc_dai_hw_params_managed(dai))
+		return -EINVAL;
+	return dai->driver->ops->hw_free(substream, dai);
+}
+
+static inline int snd_soc_dai_params_begin_locked(struct snd_soc_dai_params_state *p,
+		struct snd_soc_dai *dai, struct snd_pcm_substream *ss, u64 *cookie)
+{
+	int stream = ss->stream;
+
+	if ((stream != 0 && stream != 1) || !cookie)
+		return -EINVAL;
+	if (p->pending || (p->owner[stream] && p->owner[stream] != ss))
+		return -EBUSY;
+	if (p->generation == ~(u64)0)
+		return -EOVERFLOW;
+	if ((p->owner[0] || p->owner[1]) &&
+	    (dai->rate != 48000 || dai->channels != 2 || dai->sample_bits != 16))
+		return -EINVAL;
+	p->generation++;
+	p->cookie = p->generation;
+	p->transaction = ss;
+	p->pending = ss;
+	p->old_owner = p->owner[stream];
+	p->old_rate = dai->rate;
+	p->old_channels = dai->channels;
+	p->old_sample_bits = dai->sample_bits;
+	p->reuse = p->owner[0] || p->owner[1];
+	p->applied = false;
+	p->undo = true;
+	*cookie = p->cookie;
+	return 0;
+}
+
+static inline int snd_soc_dai_params_commit_locked(struct snd_soc_dai_params_state *p,
+		struct snd_soc_dai *dai, struct snd_pcm_substream *ss, u64 cookie)
+{
+	if (!cookie || p->cookie != cookie || p->pending != ss ||
+	    p->transaction != ss || !p->undo || !p->applied)
+		return -EINVAL;
+	p->owner[ss->stream] = ss;
+	dai->rate = 48000;
+	dai->channels = 2;
+	dai->sample_bits = 16;
+	p->pending = NULL;
+	/* Keep undo valid until the next serialized begin/release. */
+	return 0;
+}
+
+static inline bool snd_soc_dai_params_abort_locked(struct snd_soc_dai_params_state *p,
+		struct snd_soc_dai *dai, struct snd_pcm_substream *ss, u64 cookie)
+{
+	if (!cookie || p->cookie != cookie || p->transaction != ss || !p->undo)
+		return false;
+	p->owner[ss->stream] = p->old_owner;
+	dai->rate = p->old_rate;
+	dai->channels = p->old_channels;
+	dai->sample_bits = p->old_sample_bits;
+	p->pending = NULL;
+	p->transaction = NULL;
+	p->undo = false;
+	p->applied = false;
+	return true;
+}
+
+static inline int snd_soc_dai_params_free_locked(struct snd_soc_dai_params_state *p,
+		struct snd_soc_dai *dai, struct snd_pcm_substream *ss)
+{
+	if (ss->stream != 0 && ss->stream != 1)
+		return -EINVAL;
+	if (p->pending)
+		return -EBUSY;
+	if (p->owner[ss->stream] && p->owner[ss->stream] != ss)
+		return -EINVAL;
+	p->owner[ss->stream] = NULL;
+	p->transaction = NULL;
+	p->undo = false;
+	if (!p->owner[0] && !p->owner[1]) {
+		dai->rate = 0;
+		dai->channels = 0;
+		dai->sample_bits = 0;
+	}
+	return 0;
+}
 
 static inline struct snd_soc_pcm_stream *
 snd_soc_dai_get_pcm_stream(const struct snd_soc_dai *dai, int stream)

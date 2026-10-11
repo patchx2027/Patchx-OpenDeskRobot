@@ -554,23 +554,43 @@ int snd_soc_pcm_dai_prepare(struct snd_pcm_substream *substream)
 }
 
 int snd_soc_pcm_dai_trigger(struct snd_pcm_substream *substream,
-			    int cmd)
+				  int cmd)
 {
 	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
 	struct snd_soc_dai *dai;
-	int i, ret;
+	bool starting = cmd == SNDRV_PCM_TRIGGER_START ||
+		cmd == SNDRV_PCM_TRIGGER_RESUME || cmd == SNDRV_PCM_TRIGGER_PAUSE_RELEASE;
+	bool stopping = cmd == SNDRV_PCM_TRIGGER_STOP ||
+		cmd == SNDRV_PCM_TRIGGER_SUSPEND || cmd == SNDRV_PCM_TRIGGER_PAUSE_PUSH;
+	int i, j, ret, first = 0;
 
 	for_each_rtd_dais(rtd, i, dai) {
-		if (dai->driver->ops &&
-		    dai->driver->ops->trigger) {
-			ret = dai->driver->ops->trigger(substream, cmd, dai);
-			if (ret < 0)
-				return soc_dai_ret(dai, ret);
-		}
+		if (!(dai->driver->ops && dai->driver->ops->trigger))
+			continue;
+		ret = dai->driver->ops->trigger(substream, cmd, dai);
+		if (ret >= 0)
+			continue;
+		if (!first)
+			first = soc_dai_ret(dai, ret);
+		if (starting)
+			goto rollback;
+		if (!stopping)
+			return first;
 	}
+	return first;
 
-	return 0;
+rollback:
+	/* The failed member may have partially executed; later members are untouched.
+	 * STOP carries this substream so each callback keeps its own direction owner.
+	 */
+	for (j = i; j >= 0; j--) {
+		dai = rtd->dais[j];
+		if (dai->driver->ops && dai->driver->ops->trigger)
+			dai->driver->ops->trigger(substream, SNDRV_PCM_TRIGGER_STOP, dai);
+	}
+	return first;
 }
+
 
 int snd_soc_pcm_dai_bespoke_trigger(struct snd_pcm_substream *substream,
 				    int cmd)

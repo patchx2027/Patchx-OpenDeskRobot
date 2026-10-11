@@ -79,7 +79,7 @@ static int soc_compr_open(struct snd_compr_stream *cstream)
 
 	ret = snd_soc_pcm_component_pm_runtime_get(rtd, cstream);
 	if (ret < 0)
-		goto pm_err;
+		return ret;
 
 	mutex_lock_nested(&rtd->card->pcm_mutex, rtd->card->pcm_subclass);
 
@@ -107,7 +107,6 @@ machine_err:
 	snd_soc_dai_compr_shutdown(cpu_dai, cstream);
 out:
 	mutex_unlock(&rtd->card->pcm_mutex);
-pm_err:
 	snd_soc_pcm_component_pm_runtime_put(rtd, cstream, 1);
 
 	return ret;

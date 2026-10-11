@@ -36,6 +36,7 @@
 #include <linux/l3g4200d.h>
 #include <linux/sensor-dev.h>
 #include <linux/module.h>
+#include <linux/err.h>
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
 #endif
@@ -374,19 +375,31 @@ static int sensor_class_init(void)
 	int ret ;
 
 	sensor_class = class_create(THIS_MODULE, "sensor_class");
+	if (IS_ERR(sensor_class)) {
+		ret = PTR_ERR(sensor_class);
+		sensor_class = NULL;
+		return ret;
+	}
 	ret = class_create_file(sensor_class, &class_attr_accel_calibration);
 	if (ret) {
 		printk(KERN_ERR "%s:Fail to creat accel class file\n", __func__);
-		return ret;
+		goto err_destroy;
 	}
 
 	ret = class_create_file(sensor_class, &class_attr_gyro_calibration);
 	if (ret) {
 		printk(KERN_ERR "%s:Fail to creat gyro class file\n", __func__);
-		return ret;
+		goto err_remove_accel;
 	}
 
 	return 0;
+
+err_remove_accel:
+	class_remove_file(sensor_class, &class_attr_accel_calibration);
+err_destroy:
+	class_destroy(sensor_class);
+	sensor_class = NULL;
+	return ret;
 }
 
 static int sensor_get_id(struct i2c_client *client, int *value)
@@ -398,10 +411,12 @@ static int sensor_get_id(struct i2c_client *client, int *value)
 
 	if (sensor->ops->id_reg >= 0) {
 		for (i = 0; i < 3; i++) {
+			temp = sensor->ops->id_reg;
 			result = sensor_rx_data(client, &temp, 1);
-			*value = temp;
-			if (!result)
+			if (!result) {
+				*value = (unsigned char)temp;
 				break;
+			}
 		}
 
 		if (result)
@@ -409,7 +424,7 @@ static int sensor_get_id(struct i2c_client *client, int *value)
 
 		if (*value != sensor->ops->id_data) {
 			dev_err(&client->dev, "%s:id=0x%x is not 0x%x\n", __func__, *value, sensor->ops->id_data);
-			result = -1;
+			result = -ENODEV;
 		}
 	}
 
@@ -460,7 +475,6 @@ static int sensor_chip_init(struct i2c_client *client)
 	result = sensor_get_id(sensor->client, &sensor->devid);
 	if (result < 0) {
 		dev_err(&client->dev, "%s:fail to read %s devid:0x%x\n", __func__, sensor->i2c_id->name, sensor->devid);
-		result = -2;
 		goto error;
 	}
 
@@ -469,7 +483,6 @@ static int sensor_chip_init(struct i2c_client *client)
 	result = sensor_initial(sensor->client);
 	if (result < 0) {
 		dev_err(&client->dev, "%s:fail to init sensor\n", __func__);
-		result = -2;
 		goto error;
 	}
 	return 0;
@@ -2001,7 +2014,11 @@ int sensor_register_device(struct i2c_client *client,
 	dev_info(&client->dev, "%s: %s, id = %d\n",
 		 __func__, sensor_ops[ops->id_i2c]->name, ops->id_i2c);
 
-	sensor_probe(client, devid);
+	result = sensor_probe(client, devid);
+	if (result) {
+		sensor_ops[ops->id_i2c] = NULL;
+		i2c_set_clientdata(client, NULL);
+	}
 
 	return result;
 }
@@ -2036,9 +2053,7 @@ EXPORT_SYMBOL(sensor_unregister_device);
 
 static int __init sensor_init(void)
 {
-	sensor_class_init();
-
-	return 0;
+	return sensor_class_init();
 }
 
 static void __exit sensor_exit(void)

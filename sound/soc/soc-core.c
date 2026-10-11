@@ -520,6 +520,22 @@ static void snd_soc_flush_all_delayed_work(struct snd_soc_card *card)
 		flush_delayed_work(&rtd->delayed_work);
 }
 
+/* Finite checked profile has no system low-power contract, including partial ops. */
+static bool snd_soc_card_shared_params_any(struct snd_soc_card *card)
+{
+	struct snd_soc_pcm_runtime *rtd;
+	struct snd_soc_dai *dai;
+	int i;
+
+	for_each_card_rtds(card, rtd) {
+		for_each_rtd_dais(rtd, i, dai) {
+			if (snd_soc_dai_hw_params_any(dai))
+				return true;
+		}
+	}
+	return false;
+}
+
 #ifdef CONFIG_PM_SLEEP
 /* powers down audio subsystem for suspend */
 int snd_soc_suspend(struct device *dev)
@@ -533,6 +549,9 @@ int snd_soc_suspend(struct device *dev)
 	/* If the card is not initialized yet there is nothing to do */
 	if (!card->instantiated)
 		return 0;
+	/* Reject before wait/D3hot/mute, or before poweroff flush/DAPM side effects. */
+	if (snd_soc_card_shared_params_any(card))
+		return -EOPNOTSUPP;
 
 	/*
 	 * Due to the resume being scheduled into a workqueue we could
@@ -2008,6 +2027,9 @@ int snd_soc_poweroff(struct device *dev)
 
 	if (!card->instantiated)
 		return 0;
+	/* Reject before wait/D3hot/mute, or before poweroff flush/DAPM side effects. */
+	if (snd_soc_card_shared_params_any(card))
+		return -EOPNOTSUPP;
 
 	/*
 	 * Flush out pmdown_time work - we actually do want to run it
@@ -2216,6 +2238,70 @@ int snd_soc_unregister_card(struct snd_soc_card *card)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snd_soc_unregister_card);
+
+/**
+ * snd_soc_component_shutdown_card - drain and unbind a component's card
+ * @dev: component device, whose driver lifetime the caller owns
+ * @driver: exact registered component driver
+ * @timeout_ms: file release wait, between 1 and 5000 milliseconds
+ *
+ * Process context only. Opt-in shutdown callers must release their private
+ * locks before entry. client_mutex stabilizes component/card just as in
+ * snd_soc_unregister_card(); card->mutex must not be held while files drain
+ * because DPCM close needs it. Disconnect closes admission but has the normal
+ * ALSA disconnect side effects. A timeout keeps the card/resources allocated.
+ * The existing delayed-work flush and card free retain their framework waits.
+ */
+int snd_soc_component_shutdown_card(struct device *dev,
+			 const struct snd_soc_component_driver *driver,
+			 unsigned int timeout_ms)
+{
+	struct snd_soc_component *component;
+	struct snd_soc_card *card;
+	struct snd_card *snd_card;
+	long remaining;
+	int ret = 0;
+
+	if (!dev || !driver || !timeout_ms || timeout_ms > 5000)
+		return -EINVAL;
+	might_sleep();
+	mutex_lock(&client_mutex);
+	component = snd_soc_lookup_component_nolocked(dev, driver->name);
+	if (!component)
+		goto out;
+	if (component->driver != driver) {
+		ret = -EINVAL;
+		goto out;
+	}
+	card = component->card;
+	if (!card)
+		goto out;
+	if (!card->instantiated || !card->snd_card) {
+		ret = -EINVAL;
+		goto out;
+	}
+	snd_card = card->snd_card;
+	ret = snd_card_disconnect(snd_card);
+	if (ret < 0)
+		goto out;
+	spin_lock_irq(&snd_card->files_lock);
+	remaining = wait_event_lock_irq_timeout(snd_card->remove_sleep,
+					      list_empty(&snd_card->files_list),
+					      snd_card->files_lock,
+					      msecs_to_jiffies(timeout_ms));
+	if (!remaining && !list_empty(&snd_card->files_list))
+		ret = -ETIMEDOUT;
+	spin_unlock_irq(&snd_card->files_lock);
+	if (ret < 0)
+		goto out;
+	/* Same internal cleanup as component removal; no recursive client lock. */
+	snd_soc_unbind_card(card, false);
+out:
+	mutex_unlock(&client_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(snd_soc_component_shutdown_card);
+
 
 /*
  * Simplify DAI link configuration by removing ".-1" from device names
