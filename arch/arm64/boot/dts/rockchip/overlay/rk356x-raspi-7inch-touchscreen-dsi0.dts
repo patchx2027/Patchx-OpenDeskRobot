@@ -1,0 +1,79 @@
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/display/rockchip_vop.h>
+
+/ {
+	fragment@0 {
+		target = <&dsi0>;
+
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@1 {
+		target = <&i2c3>;
+
+		__overlay__ {
+
+			status = "okay";
+		};
+	};
+
+	fragment@2 {
+		target = <&raspits_panel_1>;
+
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@3 {
+		target = <&raspits_touch_ft5426_1>;
+
+		__overlay__ {
+			status = "okay";
+
+		};
+	};
+
+	fragment@4 {
+		target = <&video_phy0>;
+
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@5 {
+		target = <&dsi0_in_vp0>;
+
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@6 {
+		target = <&dsi0_in_vp1>;
+
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@7 {
+		target = <&route_dsi0>;
+
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@8 {
+		target = <&hdmi>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+};
