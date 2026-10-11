@@ -1,6 +1,6 @@
 # PatchX Android 应用
 
-这是 PatchX 桌面机器人 Android 用户应用的源码发布版，包含语音处理、Unity 交互、视觉处理和设备通信相关代码。当前缺少 `unityLibrary`、Opus Java 适配源码、第三方 SDK、原生库及模型等输入，**本仓库尚不能独立构建完整 APK**。
+这里是 PatchX 桌面机器人的 Android 应用代码，包括语音处理、Unity 交互、视觉处理和设备通信。当前缺少 `unityLibrary`、Opus Java 适配源码、第三方 SDK、原生库及模型等输入，**本仓库尚不能独立构建完整 APK**。
 
 ## 工程信息
 
@@ -16,7 +16,19 @@
 | 构建 JDK | `17` |
 | Java 源码 / 字节码级别 | `11` |
 
-运行依赖设备厂商的音频、串口、板卡服务与原生库，源码还包含对 `com.patchx_sys` 配套服务的绑定接口。这里的最低 API 和 ABI 是构建配置，不代表已验证普通手机、模拟器或任意 Android 板卡均可运行。
+运行依赖设备厂商的音频、串口、板卡服务与原生库，源码还包含对 `com.patchx_sys` 配套服务的绑定接口。最低 API 和 ABI 仅表示编译配置；普通手机、模拟器及其他 Android 板卡是否能运行，尚未验证。
+
+## 第一次读代码
+
+先按下面的顺序看三个文件。暂时只读代码时，不必先配置 SDK 或编译 APK。
+
+| 文件 | 先找什么 |
+| --- | --- |
+| [AndroidManifest.xml](app/src/main/AndroidManifest.xml) | 查看权限、服务和启动 Activity；启动入口是 `.patchx.MainActivity2` |
+| [MainActivity2.java](app/src/main/java/com/patchx_main/patchx/MainActivity2.java) | 从 `onCreate()` 看启动初始化；这个 Activity 继承 `UnityPlayerActivity` |
+| [DeviceManager.java](app/src/main/java/com/patchx_main/patchx/manage/DeviceManager.java) | 从 `sendDeviceCommand()`、`sendDeviceAngle()` 看设备命令如何调用厂商 UART 接口 |
+
+要了解界面与 Unity 的连接，先读 `MainActivity2`；要改设备命令，先读 `DeviceManager`。涉及配套系统服务时，再查 `app/src/main/aidl/`，然后按下方目录进入对应功能。
 
 ## 目录导航
 
@@ -45,11 +57,11 @@ SDK、原生库和资源的预期位置如下，路径相对于本目录：
 | 32 位 ARM 原生库 | `app/src/main/jniLibs/armeabi-v7a/` |
 | 语音模型、视觉模型及配套资源 | `app/src/main/assets/` 下的对应路径 |
 
-[excluded-inputs.json](docs/excluded-inputs.json) 记录来源快照中未分发文件的相对路径、大小和 SHA-256。清单用于定位和识别输入，不赋予复制或再分发权，也不保证清单文件补齐后即可编译或运行。私钥、设备授权等材料应由使用者为自己的设备重新取得，不应复用来源工程的材料。
+[excluded-inputs.json](docs/excluded-inputs.json) 记录来源快照中未分发文件的相对路径、大小和 SHA-256。可用这份清单核对文件。文件的使用和再分发仍受原许可约束，补齐清单也不表示编译和运行已经通过。私钥、设备授权等材料应由使用者为自己的设备重新取得，不应复用来源工程的材料。
 
 ## 本地配置与构建
 
-将 [local.properties.example](local.properties.example) 复制为 `local.properties` 后填写自己的参数。示例默认不提供账户或服务配置；必需参数未配置时，对应连接会记录未配置并跳过。
+[local.properties.example](local.properties.example) 中各参数的用途如下。填写自己的账户和服务信息；必需参数为空时，应用会记录缺项并跳过对应连接。
 
 | 属性 | 用途 |
 | --- | --- |
@@ -72,7 +84,7 @@ SDK、原生库和资源的预期位置如下，路径相对于本目录：
 python3 tools/check_prerequisites.py
 ```
 
-源码发布版缺少必需输入时，检查会列出缺项并以非零状态退出。这是对当前发布边界的提示，不代表完整构建测试。Gradle 配置阶段也会在缺少 Unity 模块时给出说明。
+有缺项时，脚本会列出文件并以非零状态退出。先处理这些缺项，再尝试构建；这一步只检查输入，不会编译 APK。Gradle 也会在缺少 Unity 模块时给出说明。
 
 在上述输入与本地配置补齐后，在 `software/android/` 中运行：
 
@@ -80,7 +92,7 @@ python3 tools/check_prerequisites.py
 ./gradlew :app:assembleDebug
 ```
 
-Windows 可使用 `gradlew.bat :app:assembleDebug`。首次运行 Wrapper 需要联网下载对应 Gradle 发行版。该命令说明目标构建任务；当前源码发布版不承诺此命令成功。具体执行情况见 [发布状态](docs/RELEASE_STATUS.md)。未经实际构建和设备测试，不将源码检查视为 APK 或硬件功能验收。
+Windows 可使用 `gradlew.bat :app:assembleDebug`。首次运行 Wrapper 需要联网下载对应 Gradle 发行版。当前仓库仍缺少开头列出的输入，尚未通过完整 APK 构建。已有检查结果见 [发布状态](docs/RELEASE_STATUS.md)；源码检查不能替代 APK 构建和设备测试。
 
 ## 发布与许可
 

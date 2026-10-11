@@ -1,12 +1,12 @@
 # PatchX RK3568 设备树
 
-本目录描述 PatchX `3568A` / AIoT-3568PQ 板卡的 RK3568 控制器与屏幕、音频、供电及外设连接。设备树按硬件功能拆分，引用使用 `&label`，常用板级配置集中在 `board/`。
+这里存放 PatchX `3568A` / AIoT-3568PQ 板卡的设备树。屏幕、音频、供电和无线连接分别放在 `board/` 的几个文件里，节点之间用 `&label` 引用。
 
 内容由 2026-10-07 采集的 Android 11 / Linux `4.19.232` 运行树整理而来，标签根据原导出符号恢复，并非取得了原厂 DTS 源文件。
 
 ## 快速开始
 
-先打开入口 [rk3568-patchx-android.dts](rk3568-patchx-android.dts)，根据 include 顺序找到对应功能。安装 Device Tree Compiler（`dtc`）后，在本目录编译：
+先看 [阅读与修改教程](GUIDE.md)，跟着背光配置熟悉标签和文件之间的关系，再打开入口 [rk3568-patchx-android.dts](rk3568-patchx-android.dts)。需要编译时，安装 Device Tree Compiler（`dtc`），在本目录运行：
 
 ```sh
 dtc -i . -I dts -O dtb \
@@ -14,9 +14,9 @@ dtc -i . -I dts -O dtb \
     rk3568-patchx-android.dts
 ```
 
-编译产物用于检查和集成。整理前后的 760 个节点、4,744 项保留属性已逐项核对等价；该语义核对不等于新系统上板验收。来源、脱敏项及校验值见 [export-info.json](export-info.json)。
+整理前后编译结果中的 760 个节点、4,744 项保留属性已逐项比对，值没有变化。这个检查确认的是整理未改动配置，新系统仍需上板验证。来源、删除的设备信息及文件校验值见 [export-info.json](export-info.json)。
 
-## 按这个顺序阅读
+## 文件怎么分工
 
 | 文件 | 阅读内容 |
 | --- | --- |
@@ -32,7 +32,7 @@ dtc -i . -I dts -O dtb \
 
 ## 阅读与修改指南
 
-[GUIDE.md](GUIDE.md) 从现有配置出发，介绍默认亮度、720×720 屏时序、声音连线，以及电压、GPIO 和 pinctrl 元组的读法。示例保留当前值，实际修改根据器件资料和板卡接线确定。
+[GUIDE.md](GUIDE.md) 从现有配置出发，介绍默认亮度、720×720 屏时序、声音连线，以及电压、GPIO 和 pinctrl 元组的读法。示例使用当前配置值；修改时以器件资料和板卡接线为准。
 
 这是 Android 4.19 的硬件参考；Linux 5.10 驱动集成的参数与设备树要求见 [驱动说明](../drivers/linux-5.10/README.md)。
 

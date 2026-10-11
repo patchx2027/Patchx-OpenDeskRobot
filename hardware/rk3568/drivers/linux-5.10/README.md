@@ -1,6 +1,6 @@
 # RK3568 Linux 5.10 驱动
 
-本目录按已验证功能公开 PatchX RK3568 板卡使用的 Linux 驱动补丁与源码索引。
+这里是 PatchX RK3568 板卡使用的 Linux 驱动补丁，以及对应的上游源码位置。已在板上检查过的功能如下。
 
 | 功能 | 已验证范围 |
 | --- | --- |
@@ -11,21 +11,21 @@
 | Wi-Fi | `PM=0`、`band=a` 的 5 GHz 配置下，64 KiB 双向 TCP 传输一致 |
 | 硬件随机数 | Rockchip RNG 绑定、CRNG 就绪与非阻塞 `getrandom` 成功 |
 
-条件和结果见 [VALIDATION.md](VALIDATION.md)，机器可读清单见 [features.json](features.json)。
+每项使用的配置和结果见 [VALIDATION.md](VALIDATION.md)，同一份功能清单也提供 [JSON 文件](features.json)。
 
 ## 源码与许可
 
 固定基线为 [Orange Pi Linux BSP](https://github.com/orangepi-xunlong/linux-orangepi.git) 提交 `9f9e9d18574d0914c0d192a90c3babfe1fd63c95`，版本 `5.10.160-rt89`。
 
-[series](series) 按顺序列出 15 份补丁：`0001`–`0014` 中排除传感器补丁 `0005`，随后应用 `0015`、`0016`。USB Audio 采用固定 SDK 原有实现。补丁及 42 个源文件的身份记录在 [manifest.json](manifest.json)：25 个改动文件、17 个上游引用文件。
+[series](series) 按顺序列出 15 份补丁：`0001`–`0014` 中排除传感器补丁 `0005`，随后应用 `0015`、`0016`。USB Audio 采用固定 SDK 原有实现。补丁及 42 个源文件的版本和校验值记录在 [manifest.json](manifest.json)：25 个改动文件、17 个上游引用文件。
 
-驱动文件与各自实测来源一致；排除传感器补丁后的完整组合未重新构建。本发布提供源码级集成，不作为已验收的整机镜像。
+这里的驱动文件与实测时使用的文件一致。补丁集去掉了传感器补丁，删减后的完整内核尚未重新构建；下载得到的是供集成使用的源码，不是已验收的整机镜像。
 
 补丁许可继承被修改文件，参见 [COPYING](COPYING)、[LICENSES/](LICENSES/) 和 [SOURCE-NOTICES.txt](SOURCE-NOTICES.txt)。Wi-Fi firmware/NVRAM 由使用者取得适用于自己模组和板卡的文件及许可，本目录不分发这些二进制。
 
 ## 从哪里读代码
 
-下列路径相对固定版本的内核源码目录；先应用本项目补丁，再阅读对应实现。
+先在下表找到要读的驱动，再按“应用补丁”一节取得源码。表中的路径都从内核源码根目录算起，应用补丁后即可打开对应文件。
 
 | 功能 | 主要源码入口 | 本项目改动 |
 | --- | --- | --- |
@@ -39,6 +39,8 @@
 硬件连线从 [设备树阅读与修改教程](../../device-tree/GUIDE.md) 开始，驱动的 `compatible`、时钟、GPIO 和供电引用应与对应 BSP 的设备树一致。
 
 ## 应用补丁
+
+只想了解硬件连线，可以先读设备树教程。要看驱动的具体处理或修改驱动，再执行下面的步骤。
 
 在 Linux 或 WSL 中，从本目录执行。示例创建独立工作目录，按 `series` 逐条检查并应用补丁；任一步失败即退出。完整源码从上述固定上游取得。
 
@@ -95,7 +97,15 @@ make -C "$WORK/linux" O="$OUT" ARCH=arm64 \
     CROSS_COMPILE=aarch64-linux-gnu- M="$CODEC_OUT" modules || exit 1
 ```
 
-保留最终 `.config`、工具链版本及产物散列，使用同次构建的 Image 和模块。上述步骤生成内核与模块，板级设备树和启动包按实际硬件集成。
+两次构建都成功后，检查下面两个文件：
+
+| 产物 | 位置 |
+| --- | --- |
+| 内核 | `$OUT/arch/arm64/boot/Image` |
+| RK817 codec 模块 | `$CODEC_OUT/snd-soc-rk817.ko` |
+
+读到这里，应能找到所选驱动的源码、对应补丁，以及构建生成的内核和模块。
+保留最终 `.config`、工具链版本和文件校验值，使用同次构建的 Image 和模块。构建得到内核和模块后，还要配合板级设备树制作启动包。
 
 ## 音频设备树
 
