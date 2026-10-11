@@ -1,0 +1,128 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+
+// Keep deployment settings in the ignored local.properties file.
+def deployment = new Properties()
+def deploymentFile = rootProject.file('local.properties')
+if (deploymentFile.isFile()) {
+    deploymentFile.withInputStream { deployment.load(it) }
+}
+def javaString = { String value -> groovy.json.JsonOutput.toJson(value) }
+
+android {
+    namespace 'com.patchx_main'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.patchx_main"
+        minSdk 29
+        targetSdk 36
+        versionCode 101
+        versionName "1.0.1"
+
+        buildConfigField 'String', 'PATCHX_WEBSOCKET_URL', javaString(deployment.getProperty('patchx.websocketUrl', ''))
+        buildConfigField 'String', 'PATCHX_ACCESS_TOKEN', javaString(deployment.getProperty('patchx.accessToken', ''))
+        buildConfigField 'String', 'PATCHX_CLIENT_ID', javaString(deployment.getProperty('patchx.clientId', ''))
+        buildConfigField 'String', 'PATCHX_DEVICE_SN', javaString(deployment.getProperty('patchx.deviceSn', ''))
+        buildConfigField 'String', 'PATCHX_USER_ID', javaString(deployment.getProperty('patchx.userId', ''))
+        buildConfigField 'String', 'PATCHX_MQTT_HOST', javaString(deployment.getProperty('patchx.mqttHost', ''))
+        buildConfigField 'String', 'PATCHX_MQTT_INSTANCE_ID', javaString(deployment.getProperty('patchx.mqttInstanceId', ''))
+        buildConfigField 'String', 'PATCHX_MQTT_ACCESS_KEY_ID', javaString(deployment.getProperty('patchx.mqttAccessKeyId', ''))
+        buildConfigField 'String', 'PATCHX_MQTT_ACCESS_KEY_SECRET', javaString(deployment.getProperty('patchx.mqttAccessKeySecret', ''))
+        buildConfigField 'String', 'PATCHX_MQTT_GROUP_ID', javaString(deployment.getProperty('patchx.mqttGroupId', ''))
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters "armeabi-v7a"
+        }
+        packagingOptions {
+            doNotStrip "**/*.so"
+        }
+    }
+    buildFeatures {
+        aidl true
+        buildConfig true
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            shrinkResources false
+        }
+        release {
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // JNI配置（Opus库）
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+    packaging {
+        resources {
+            excludes += [
+                    "META-INF/INDEX.LIST",
+                    "META-INF/DEPENDENCIES",
+                    "META-INF/io.netty.versions.properties"
+            ]
+            // Keep third-party notices in the APK when dependencies are supplied.
+            merges += [
+                    "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/NOTICE.md",
+                    "META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/LICENSE.md",
+                    "META-INF/AL2.0", "META-INF/LGPL2.1"
+            ]
+        }
+    }
+
+}
+
+dependencies {
+
+
+    api fileTree(dir: 'libs', include: '*.jar')
+
+    // 扫描并引入所有 AAR 文件（包括 opus.aar 和 libwebrtc.aar）
+    api fileTree(dir: 'libs', include: '*.aar')
+    // dependency for opus.aar library
+    //compileOnly fileTree(dir: "libs", include: ["libwebrtc.aar"])
+    // 开源 Logger 库
+    implementation 'com.orhanobut:logger:2.2.0'
+
+    // WorkManager 用于定期任务
+    implementation 'androidx.work:work-runtime:2.9.0'
+
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'  // WebSocket依赖
+    implementation 'org.greenrobot:eventbus:3.3.1'
+    implementation "com.google.code.gson:gson:2.8.2"
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
+    implementation "com.github.hannesa2:paho.mqtt.android:4.4.1"
+    implementation 'com.github.f4b6a3:uuid-creator:5.3.6'
+
+
+    implementation "androidx.camera:camera-core:1.3.4"
+    implementation "androidx.camera:camera-camera2:1.3.4"
+    implementation "androidx.camera:camera-lifecycle:1.3.4"
+    implementation "androidx.camera:camera-view:1.3.4"
+
+
+
+    implementation files('libs/smdt.jar')
+    implementation project(':unityLibrary')
+    implementation libs.appcompat
+    implementation libs.material
+    implementation libs.activity
+    implementation libs.constraintlayout
+    testImplementation libs.junit
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
+}

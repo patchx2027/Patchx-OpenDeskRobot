@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="OvalImageStyle">
+        <item name="cornerFamily">rounded</item>
+        <!-- 100% 圆角，宽高不相等时就是椭圆 -->
+        <item name="cornerSize">50%</item>
+    </style>
+</resources>

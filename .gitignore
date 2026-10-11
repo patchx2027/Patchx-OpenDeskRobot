@@ -1,0 +1,20 @@
+# Local deployment configuration and generated files
+**/local.properties
+**/.gradle/
+**/build/
+**/.idea/
+*.iml
+.DS_Store
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+.env
+.env.*
+# Inputs with pending provenance; add them only after a separate license review.
+/software/android/unityLibrary/
+/software/android/app/libs/
+/software/android/app/src/main/jniLibs/
+/software/android/app/src/main/assets/
+/software/android/app/src/main/java/com/theeasiestway/opus/

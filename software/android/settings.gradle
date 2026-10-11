@@ -1,0 +1,33 @@
+pluginManagement {
+    repositories {
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        mavenCentral()
+        gradlePluginPortal()
+        maven { url 'https://jitpack.io' }
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
+}
+
+if (!file('unityLibrary/build.gradle').isFile()) {
+    throw new GradleException('Missing Unity export: unityLibrary/build.gradle. '
+            + 'This is a source release with external inputs omitted. '
+            + 'Run: python3 tools/check_prerequisites.py; see README.md.')
+}
+
+rootProject.name = "PatchX"
+include ':app'
+include ':unityLibrary'
+project(':unityLibrary').projectDir = new File(rootDir, 'unityLibrary')

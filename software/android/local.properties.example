@@ -1,0 +1,14 @@
+# Copy to local.properties (ignored by Git). Set your own Android SDK path.
+# Values use Java .properties syntax; use forward slashes in Windows paths.
+sdk.dir=
+# These values are compiled into your private APK; do not distribute production secrets.
+patchx.websocketUrl=
+patchx.accessToken=
+patchx.clientId=
+patchx.deviceSn=
+patchx.userId=
+patchx.mqttHost=
+patchx.mqttInstanceId=
+patchx.mqttAccessKeyId=
+patchx.mqttAccessKeySecret=
+patchx.mqttGroupId=

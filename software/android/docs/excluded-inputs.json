@@ -1,0 +1,531 @@
+{
+  "schema_version": 1,
+  "description": "Inputs present in the source snapshot but intentionally not included in this public source release. Hashes identify files only; they do not grant redistribution rights.",
+  "files": [
+    {
+      "path": "app/libs/AIUI.jar",
+      "bytes": 126675,
+      "sha256": "17f2a4a7697fc3cf11789d6fa173ecd340de66fbdfb9a53e92535aaaf971f036",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/libs/AlsaRecorder.jar",
+      "bytes": 6792,
+      "sha256": "592da57c585c78e665175aaa7a489920f6025ac4b2142f4a0fe584fda994c160",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/libs/cae.jar",
+      "bytes": 1814,
+      "sha256": "e573352399631118789699524aefba7de38ee6c71ffdcb9dba02d58dd9bbaa5b",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/libs/kwmusic-autosdk-v2.0.9.jar",
+      "bytes": 217142,
+      "sha256": "63039e9bf16ba72a530b5b9d612d0fd0f6e58b6f76464c8d089d4794ba5879a9",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/libs/kwylsdk.jar",
+      "bytes": 1733,
+      "sha256": "7b7a38dccf3fe0a040ae5d9492513757ec57be4d8075318714afa42d5dbfcef0",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/libs/smdt.jar",
+      "bytes": 163108,
+      "sha256": "53371d0b7fb90d0de383b1afa210e5eb6c0185747d1e9cc49ff598b5f0111544",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/auth.ini",
+      "bytes": 36,
+      "sha256": "135eca5842ad1956cee39ccded3794ecbfb22b5d3d24a28d4ebf0aa1b26344f5",
+      "status": "not-distributed",
+      "reason": "private or device authorization material; do not redistribute"
+    },
+    {
+      "path": "app/src/main/assets/cfg/aiui_phone.cfg",
+      "bytes": 1283,
+      "sha256": "0002bfe5481c8d79758fbd7f4a369017705f78666c5eaafe2a65886444867927",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/cfg/msc.cfg",
+      "bytes": 522,
+      "sha256": "8c5ade35b19a52e178eb827880042a35cb2ab2e64a62c4cb1b232e719113baaf",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/dingdong.wav",
+      "bytes": 86094,
+      "sha256": "7607cbc54841f20d2008d4a40ddde3c69b7aeaf8e373a9b35a8c8bb457ff6517",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/dog.jpg",
+      "bytes": 501222,
+      "sha256": "6ec341b796d6aefd0b3e96c192843ff1fe8ad3e24886c06528a77db8729e43cf",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/haqian.wav",
+      "bytes": 507982,
+      "sha256": "5718daf7034b8f7e4b7c11b41f634f3b19063754d5accf19ce93614d9dd276c7",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/help.wav",
+      "bytes": 47140,
+      "sha256": "e50a05079e0e2529d6f5aabcb5f5c9b0f0516df1a2e6f49fb9bfe2911e0dab12",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/hlw/hlw.ini",
+      "bytes": 238,
+      "sha256": "aa1703a31dd865b039b2b5c25183adac854ce1f5c0956b6a9dfce74685441b8f",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/hlw/hlw.param",
+      "bytes": 336,
+      "sha256": "4b3c42ff572e232051ee0fc2c8f44b9c4659a534c7a30f9aa6dd3e3ca9ad0d21",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/hlw/res_cae_model.bin",
+      "bytes": 585125,
+      "sha256": "8589b834f1746fd5264bce1776cb3a6e1f64a0419fad028b7ccfb89455bc003c",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/hlw/res_ivw_model.bin",
+      "bytes": 762214,
+      "sha256": "6c72b67174c1fb15ad1aef545598656f4f737c47e0f507ff0b7ea7de262ce5b5",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/hlw_near/hlw.ini",
+      "bytes": 258,
+      "sha256": "cf28429565c847e4616859f273828cb51d71219d5d6aacbb96f90f2cdf2df50f",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/hlw_near/hlw.param",
+      "bytes": 336,
+      "sha256": "4b3c42ff572e232051ee0fc2c8f44b9c4659a534c7a30f9aa6dd3e3ca9ad0d21",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/hlw_near/res_cae_model.bin",
+      "bytes": 585126,
+      "sha256": "0a3529603cc9b0ab495561957bf245d9af9bed809b723810ccfcf3a6c835f9fa",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/hlw_near/res_ivw_model.bin",
+      "bytes": 762214,
+      "sha256": "6c72b67174c1fb15ad1aef545598656f4f737c47e0f507ff0b7ea7de262ce5b5",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/man.jpg",
+      "bytes": 29479,
+      "sha256": "a5d1d576f4bea9ed3a5dffab8bcb650a4677e3b55a2afb7d340eea782a3182b0",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/models/MobileFaceNet_fp32.rknn",
+      "bytes": 2146290,
+      "sha256": "ea585016af0ffeafce7e4ccac343fe59668a5a6fcc20922b255e66a4563c5279",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/models/RetinaFace_mobile320_fp32.rknn",
+      "bytes": 1053500,
+      "sha256": "279b73bce6cb9d407999987769532b34cf77b7f7aae4a5c22bac10dbc1c35a36",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/models/faceDetModel.rknn",
+      "bytes": 643811,
+      "sha256": "fb5c069a7d651a68654f852045f500c7b70b3f75d4af9b6e5bf5325f8f86e0b1",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/models/faceRecModel2.rknn",
+      "bytes": 19483116,
+      "sha256": "806b08ca64a801c5ecf4cf7ee1ed689d5e882cf4709d513a6c332c205878894d",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/models/image_rec.rknn",
+      "bytes": 3846155,
+      "sha256": "9d5e768432d96a169c1d8204036fd858cc77fd71b0de75d11cfbf13e0defe184",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/models/synset.txt",
+      "bytes": 31675,
+      "sha256": "acf75ef0abe89694b19056e0796401068b459c457baa30335f240c7692857355",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/saoping.wav",
+      "bytes": 326682,
+      "sha256": "e7b07f5aea0f48c3169802c9f9eee1d3355a29a9fb9a198c8e28f0ecc304afc2",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/silero_vad.onnx",
+      "bytes": 643854,
+      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/speaker_model.onnx",
+      "bytes": 28281138,
+      "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/ten-vad.onnx",
+      "bytes": 332211,
+      "sha256": "718cb7eef47e3cf5ddbe7e967a7503f46b8b469c0706872f494dfa921b486206",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/vad/meta_vad_16k.jet",
+      "bytes": 134460,
+      "sha256": "1366ca2f0515660ea3c7091e4d1782c16c8bc82dd7d9e3eb53935468158688f4",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/vtn/one_ivw.3.13.1.bin",
+      "bytes": 779636,
+      "sha256": "255a56c76fafb99683fa75a7cd281c9ae0a6c1f56b2ef0abbd791cae1debf575",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/vtn/privateKey.pem",
+      "bytes": 1700,
+      "sha256": "b82b5c77b8998599542076465f711323dfcd32bdf78141d0bdec97283e9dcd31",
+      "status": "not-distributed",
+      "reason": "private or device authorization material; do not redistribute"
+    },
+    {
+      "path": "app/src/main/assets/vtn/publicKey.pem",
+      "bytes": 462,
+      "sha256": "a250dcf1d37b866410362949dde28b5fa015d7c31f777f39a6ff1567c360bc65",
+      "status": "not-distributed",
+      "reason": "private or device authorization material; do not redistribute"
+    },
+    {
+      "path": "app/src/main/assets/vtn/vtn.ini",
+      "bytes": 677,
+      "sha256": "2e291588436442162021bbfbd73e283b901e7caa17249d52a5b486fdbe2b48d0",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/assets/zai.wav",
+      "bytes": 30500,
+      "sha256": "987d471ded2c749cd1895268e121baa9e08e58c6dfdfc3c87be0788865ae6a0d",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libOVRLipSync.so",
+      "bytes": 22219220,
+      "sha256": "2d044e7b385ad3fb77e44166f85684bf81c7c7778c3afc4fa17861bbcaf9d8ec",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libaiui.so",
+      "bytes": 1890448,
+      "sha256": "350a8884e98b7a29d376d39c040db6904774319771d318299a8bdd98d5810248",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libalsa-jni.so",
+      "bytes": 270464,
+      "sha256": "06ccb3d59b666f2bb04455854f1ead05e33bc47421ca26fc63b7b804d61de7c4",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libbacktrace.so",
+      "bytes": 58972,
+      "sha256": "3baf8c2ca7fd98a917ef5019b25c52e9484846e472ed02e46754676850b936ad",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libbase.so",
+      "bytes": 42640,
+      "sha256": "c209abe84cccc45ee49451626ca9a05c03fa8869b1bdcfb6108b11027ceea979",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libc++.so",
+      "bytes": 575136,
+      "sha256": "eab322e96d29af76c04375323aeccc72b5434953176639ff2d3b9f26fffb8f9e",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libc++_shared.so",
+      "bytes": 1301936,
+      "sha256": "0ce8906c20a019f56d2cefbadeac35cca102234971d2c8a1e09c69ee099f957a",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libcae-jni.so",
+      "bytes": 168052,
+      "sha256": "b334a589c55653878c14ed871cd6e4938c779e79c65f9f3325e4c8c58a0de13d",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libcutils.so",
+      "bytes": 100428,
+      "sha256": "664796c69cb8cc553bd2ec8bdccad3ed1a174a3820b20ead115fbcc65ea5dcd0",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libeasyopus.so",
+      "bytes": 460520,
+      "sha256": "a1061ff1129be9c3ea0219b73ce2eafebe9c224df00df9367fb4d02bf30275f1",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libhlw.so",
+      "bytes": 9064912,
+      "sha256": "d4ef253023024db977a11fc43ebd03f2077d972b550b7e1a490a320273d54e56",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libkaldi-native-fbank-core.so",
+      "bytes": 606872,
+      "sha256": "a605c6c0730c210b7eb10bf5fd93f1273ce87c46423c00d080871de4f229a58b",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/liblegacy_agc-lib.so",
+      "bytes": 146156,
+      "sha256": "90f7158d26ebe26df2acce7771bd38b60db18fada7c1c14c11aa67534bdbdbf7",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/liblzma.so",
+      "bytes": 95872,
+      "sha256": "abd659f92b96a0136f4dff271b14d59db92527d4c63fc612ca7f020471bed7a8",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libonnxruntime.so",
+      "bytes": 10739204,
+      "sha256": "54b0d427246341bc16e36b8ebce078c10464b11b40a6996e14ba57624ed8785e",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libopencv_java4.so",
+      "bytes": 15554404,
+      "sha256": "52b26789174caaa18ef98b8660407d1bd8a47303007f9c6fd222b425b0f8a914",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libopus.so",
+      "bytes": 341628,
+      "sha256": "26b9b6c73d8739dff9b49a74eedeb9949107c295b8aace143efecde3bcbf774c",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libopusenc.so",
+      "bytes": 5524,
+      "sha256": "a5b46708100dc42d62bea303b5fbabb3a2bbf6a52ce16df1049c3226bde0e663",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libovrlip_bridge.so",
+      "bytes": 457720,
+      "sha256": "9399acfbbe5f7cd681f7e58fe79eb933258c2ce0076b287f296f084f622fc4c6",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libpatchx-face.so",
+      "bytes": 1039588,
+      "sha256": "1c53c9d41e79860ce683a07eb0defe4bf106daf9c8ca3c817a57c566b7b81a96",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/librknnrt.so",
+      "bytes": 5347072,
+      "sha256": "86cfa35479927ca701a4adddb570c7b2c273b554e00eabe9db4035762762a128",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libserial_port.so",
+      "bytes": 4820,
+      "sha256": "a2d50990295e95d5fc1fc1430d31166013be88448f2c32675da50773eda2401d",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libsherpa-ncnn-core.so",
+      "bytes": 238192,
+      "sha256": "7d9c8edc674c1e0d9409ac85bcedb9a24ebcd4cd4742ba926c3d89a2ae807b5f",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libsherpa-ncnn-jni.so",
+      "bytes": 12824,
+      "sha256": "324c7d404d4740184e56d4465c0141d17b896f99800da11b811c0664c3cb2697",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libsherpa-onnx-c-api.so",
+      "bytes": 3061652,
+      "sha256": "ba288938de000e214cbfb1ccfacdba707e862b91c46184cad9d07dd9bd24103e",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libsherpa-onnx-cxx-api.so",
+      "bytes": 30032,
+      "sha256": "bd357eade83842c109ae5c601770d4fffc35638cc53154c8441635775b4df0dd",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libspeekerid.so",
+      "bytes": 657216,
+      "sha256": "21ba30ed3ae6bb10b9ae7f9032b71c13386341640b5c92fb227202a58536eea4",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libten_vad.so",
+      "bytes": 381232,
+      "sha256": "cc8b5ae17ceb87c49669d310c81bedf84c15c2086a7e0c98a25b415c79f0fe14",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libten_vad_jni.so",
+      "bytes": 33132,
+      "sha256": "26324215aee69ba6491061d395f4a92861d75b3ca2557037c6dc290c3bb9a0fc",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libtinyalsa.so",
+      "bytes": 30524,
+      "sha256": "b067d297d29c37755f5f3769f317f5123fecfa886cf815a3b75d4b6c75d51c79",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libunwind.so",
+      "bytes": 87692,
+      "sha256": "7f55ba0f6e0c91444c8d50ef0b3883eb748dfde6546ac9a884823f45bc57f7fd",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libutils.so",
+      "bytes": 99996,
+      "sha256": "164010a737adabb5b86fd22569f121c861d624c2d271f4642401516e78858aed",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libvideo_process.so",
+      "bytes": 4823580,
+      "sha256": "d555e8a3df117f24eb8a4bc033886878ed49fd2932cabdec4293901cafe717e7",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/jniLibs/armeabi-v7a/libvtn.so",
+      "bytes": 6400016,
+      "sha256": "c80b4e567fe437064f83818268fd60fe1e463ee2917367091c5f44da1938c323",
+      "status": "not-distributed",
+      "reason": "source, provenance and redistribution terms not yet recorded"
+    },
+    {
+      "path": "app/src/main/java/com/theeasiestway/opus/Opus.java",
+      "bytes": 2093,
+      "sha256": "fcd71f425bd753e192f71c8737aaaf25789e7f9415c5f6fff47ddec2179f6be6",
+      "status": "not-distributed",
+      "reason": "third-party Java wrapper source without recorded provenance or license"
+    },
+    {
+      "path": "app/src/main/java/com/theeasiestway/opus/OpusEncoder.java",
+      "bytes": 3137,
+      "sha256": "59ff8b4c66cbf316a81b63be0445879e8d2a0f09c8f5a17fea4b1fd52d8945a2",
+      "status": "not-distributed",
+      "reason": "third-party Java wrapper source without recorded provenance or license"
+    },
+    {
+      "path": "app/src/main/java/com/theeasiestway/opus/OpusDecoder.java",
+      "bytes": 3202,
+      "sha256": "9ced84fff523eefd7461dd92109cd90231dd41be367ed00dfe6cacdd0bb959d8",
+      "status": "not-distributed",
+      "reason": "third-party Java wrapper source without recorded provenance or license"
+    }
+  ]
+}

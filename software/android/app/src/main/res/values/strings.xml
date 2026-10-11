@@ -1,0 +1,48 @@
+<resources>
+        <string name="app_name">PatchX</string>
+        <string name="status_disconnected">连接状态：未连接</string>
+        <string name="status_connected">连接状态：已连接</string>
+        <string name="btn_connect">启动连接</string>
+        <string name="btn_disconnect">断开连接</string>
+        <string name="btn_start_record">开始录音</string>
+        <string name="btn_stop_record">停止录音</string>
+        <string name="btn_send_file">发送音频</string>
+        <string name="btn_abort">打断</string>
+        <string name="btn_quit">退出</string>
+        <string name="recording_status_idle">录音状态：未录音</string>
+        <string name="recording_status_active">录音状态：录音中（VAD检测）</string>
+        <string name="stt_hint">识别结果将显示在这里...</string>
+
+        <string name="pyURL"></string>
+        <string name="goURL"></string>
+
+
+        <string name="boot_check">自检系统  [版本号为：%s]</string>
+        <string name="open_success">打开成功</string>
+        <string name="open_faild">打开失败</string>
+        <string name="check_cards_num_title">声卡号检测</string>
+        <string name="check_cards_num_result">当前声卡号为 [ %d ]</string>
+        <string name="check_cards_permission_title">声卡权限检测</string>
+        <string name="check_cards_permission_result">声卡%d的权限为[ %s ]</string>
+        <string name="check_time_title">系统时间检测</string>
+        <string name="check_time_result">当前时间为[ %s ]</string>
+        <string name="check_net_title">网络检测</string>
+        <string name="check_net_result">当前网络状态</string>
+        <string name="check_cards_num_no_exist">未找到USB声卡</string>
+        <string name="check_cards_permission_result_none">无</string>
+        <string name="check_net_result_success">网络可用</string>
+        <string name="check_net_result_error">网络不可用</string>
+        <string name="check_success">检测完毕,全部成功,系统即将启动</string>
+        <string name="check_error">检测完毕,出现失败检测项,请修改后重新启动</string>
+        <string name="check_platform_mic">系统平台和MIC类型检测</string>
+        <string name="platform_mic">当前系统平台为[ %s ],Mic类型为[ %s ]</string>
+        <string name="check_cae_auth">CAE鉴权</string>
+        <string name="cea_auth_success">"   鉴权成功"</string>
+        <string name="cea_auth_error">"   鉴权失败"</string>
+        <string name="check_open_card">声卡打开测试</string>
+        <string name="change_success">,自动修改权限成功</string>
+
+        <string name="unity_activity_label">UnityFace</string>
+        <string name="game_view_content_description" translatable="false">Game view</string>
+
+</resources>
