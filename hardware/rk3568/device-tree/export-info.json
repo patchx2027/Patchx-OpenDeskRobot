@@ -14,7 +14,7 @@
   },
   "public_dts": {
     "file": "rk3568-patchx-android.dts",
-    "sha256": "52a9ab3f7676ce2f5ec8a2bcee21cb2ac9517960b794f18f4af5c0237cd798ea"
+    "sha256": "0b6023b305920096c65b50d238140bd69200e6d61d24d9527f15d51b41b7722f"
   },
   "removed_properties": [
     "/:serial-number",
@@ -49,22 +49,38 @@
     "i2c_bus_reg": 1,
     "spi_bus_reg": 1,
     "unique_unit_address": 1,
-    "clocks_property": 357,
-    "cooling_device_property": 2,
-    "dmas_property": 38,
-    "io_channels_property": 2,
-    "iommus_property": 9,
-    "phys_property": 18,
-    "power_domains_property": 40,
-    "pwms_property": 2,
-    "resets_property": 76,
-    "sound_dai_property": 8,
-    "thermal_sensors_property": 2,
-    "gpios_property": 50,
     "interrupt_provider": 5,
     "graph_child_address": 7,
     "graph_port": 1
   },
   "new_dtc_warning_categories_or_counts": false,
-  "deployment_or_boot_test_performed": false
+  "deployment_or_boot_test_performed": false,
+  "previous_flat_dts_sha256": "52a9ab3f7676ce2f5ec8a2bcee21cb2ac9517960b794f18f4af5c0237cd798ea",
+  "source_files": {
+    "board/audio.dtsi": "f2d5f8869ff79f5ecbc0d7d542f067edaefacbbf6d4d4afee63422a7606113ef",
+    "board/connectivity.dtsi": "643b252b64d7984f37f624a92b8daa74377661eac4c64424eec32adf44764860",
+    "board/display.dtsi": "57c6563b8f3067fceb9e384b0830e7e24ce94123df7eff70b48dffda8975dec5",
+    "board/panel-init.dtsi": "9a53e89387877577489eab83f8241e87ad18957f418908dcd1acffeb76ec2a40",
+    "board/power.dtsi": "ba1bb1747fff417e02736517e82c0e968b57be63295299471b492dba96aa0f62",
+    "rk3568-android-base.dtsi": "82bb48382d9834125bef242092742be11a06e57d15446dedc8b002a0f3f5e144",
+    "rk3568-android-compat.dtsi": "285203aac73138848fc39484e1fe943651fe5f8e26e167dd57406b8326cf2e76",
+    "rk3568-android-pinctrl.dtsi": "1735c62db8ae8a8f97ce106578253765b6f0b17bd7c3c9b88948b9eb868cdac4",
+    "rk3568-patchx-android.dts": "0b6023b305920096c65b50d238140bd69200e6d61d24d9527f15d51b41b7722f"
+  },
+  "readable_reconstruction": {
+    "date": "2026-10-11",
+    "restored_original_labels": 542,
+    "numeric_references_replaced_by_labels": 1298,
+    "split_board_includes": [
+      "board/power.dtsi",
+      "board/display.dtsi",
+      "board/panel-init.dtsi",
+      "board/audio.dtsi",
+      "board/connectivity.dtsi"
+    ],
+    "compiled_semantics_identical_to_previous_public_tree": true,
+    "nodes": 760,
+    "properties": 4744,
+    "panel_command_bytes_preserved": true
+  }
 }

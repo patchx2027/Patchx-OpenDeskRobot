@@ -1,0 +1,46 @@
+/* Android audio wiring: simple-card -> I2S1 -> RK809 codec. */
+/ {
+	rk809_sound: rk809-sound {
+		status = "okay";
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,name = "rockchip,rk809-codec";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,widgets = "Microphone", "Mic Jack", "Headphone", "Headphone Jack";
+		simple-audio-card,routing = "Mic Jack", "MICBIAS1", "IN1P", "Mic Jack", "Headphone Jack", "HPOL", "Headphone Jack", "HPOR";
+
+		simple-audio-card,cpu {
+			sound-dai = <&i2s1_8ch>;
+		};
+
+		simple-audio-card,codec {
+			sound-dai = <&rk809_codec>;
+		};
+	};
+};
+
+&i2s1_8ch {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2s1m0_sclktx>, <&i2s1m0_lrcktx>, <&i2s1m0_sdi0>, <&i2s1m0_sdo0>;
+	status = "okay";
+	rockchip,clk-trcm = <1>;
+};
+
+&rk809 {
+	rk809_codec: codec {
+		#sound-dai-cells = <0x0>;
+		compatible = "rockchip,rk809-codec", "rockchip,rk817-codec";
+		clocks = <&cru 0x1a3>;
+		clock-names = "mclk";
+		assigned-clocks = <&cru 0x1a3>, <&cru 0x1a6>;
+		assigned-clock-rates = <12288000>;
+		assigned-clock-parents = <&cru 0x48>, <&cru 0x48>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&i2s1m0_mclk>;
+		hp-volume = <30>;
+		spk-volume = <12>;
+		spk-ctl-gpios = <&gpio4 20 1>;
+		mic-in-differential;
+		status = "okay";
+	};
+};

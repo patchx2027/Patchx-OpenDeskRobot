@@ -1,0 +1,245 @@
+/* Panel, DSI routing and PWM backlight. Screen reading entry. */
+/ {
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		/* PWM4 channel 0, period 25000 ns, normal polarity. */
+		pwms = <&pwm4 0 25000 0>;
+		brightness-levels = <0 20 20 21 21 22 22 23
+			23 24 24 25 25 26 26 27
+			27 28 28 29 29 30 30 31
+			31 32 32 33 33 34 34 35
+			35 36 36 37 37 38 38 39
+			40 41 42 43 44 45 46 47
+			48 49 50 51 52 53 54 55
+			56 57 58 59 60 61 62 63
+			64 65 66 67 68 69 70 71
+			72 73 74 75 76 77 78 79
+			80 81 82 83 84 85 86 87
+			88 89 90 91 92 93 94 95
+			96 97 98 99 100 101 102 103
+			104 105 106 107 108 109 110 111
+			112 113 114 115 116 117 118 119
+			120 121 122 123 124 125 126 127
+			128 129 130 131 132 133 134 135
+			136 137 138 139 140 141 142 143
+			144 145 146 147 148 149 150 151
+			152 153 154 155 156 157 158 159
+			160 161 162 163 164 165 166 167
+			168 169 170 171 172 173 174 175
+			176 177 178 179 180 181 182 183
+			184 185 186 187 188 189 190 191
+			192 193 194 195 196 197 198 199
+			200 201 202 203 204 205 206 207
+			208 209 210 211 212 213 214 215
+			216 217 218 219 220 221 222 223
+			224 225 226 227 228 229 230 231
+			232 233 234 235 236 237 238 239
+			240 241 242 243 244 245 246 247
+			248 249 250 251 252 253 254 255>;
+		default-brightness-level = <128>;
+		backlight_min = <0>;
+		backlight_max = <255>;
+		backlight_delayms = <10>;
+	};
+
+	display_subsystem: display-subsystem {
+		compatible = "rockchip,display-subsystem";
+		memory-region = <&drm_logo>, <&drm_cubic_lut>;
+		memory-region-names = "drm-logo", "drm-cubic-lut";
+		ports = <&vop_out>;
+		devfreq = <&dmc>;
+
+		route {
+
+			route_dsi0: route-dsi0 {
+				cubic_lut,offset = <0x2000>;
+				overscan,bottom_margin = <0x64>;
+				overscan,top_margin = <0x64>;
+				overscan,right_margin = <0x64>;
+				overscan,left_margin = <0x64>;
+				video,aspect_ratio = <0x0>;
+				video,flags = <0x8000000a>;
+				video,vrefresh = <0x3d>;
+				video,crtc_vsync_end = <0x2e2>;
+				video,crtc_hsync_end = <0x2ea>;
+				video,vdisplay = <0x2d0>;
+				video,hdisplay = <0x2d0>;
+				video,clock = <0x8aac>;
+				logo,ymirror = <0x0>;
+				logo,bpp = <0x18>;
+				logo,height = <0x2d0>;
+				logo,width = <0x2d0>;
+				logo,offset = <0x17c000>;
+				status = "okay";
+				logo,uboot = "logo.bmp";
+				logo,kernel = "logo_kernel.bmp";
+				logo,mode = "center";
+				charge_logo,mode = "center";
+				connect = <&vp1_out_dsi0>;
+			};
+
+			route_dsi1: route-dsi1 {
+				status = "disabled";
+				logo,uboot = "logo.bmp";
+				logo,kernel = "logo_kernel.bmp";
+				logo,mode = "center";
+				charge_logo,mode = "center";
+				connect = <&vp0_out_dsi1>;
+			};
+
+			route_edp: route-edp {
+				status = "disabled";
+				logo,uboot = "logo.bmp";
+				logo,kernel = "logo_kernel.bmp";
+				logo,mode = "center";
+				charge_logo,mode = "center";
+				connect = <&vp0_out_edp>;
+			};
+
+			route_hdmi: route-hdmi {
+				status = "okay";
+				logo,uboot = "logo.bmp";
+				logo,kernel = "logo_kernel.bmp";
+				logo,mode = "center";
+				charge_logo,mode = "center";
+				connect = <&vp0_out_hdmi>;
+			};
+
+			route_lvds: route-lvds {
+				status = "disabled";
+				logo,uboot = "logo.bmp";
+				logo,kernel = "logo_kernel.bmp";
+				logo,mode = "center";
+				charge_logo,mode = "center";
+				connect = <&vp1_out_lvds>;
+			};
+
+			route_rgb: route-rgb {
+				status = "disabled";
+				logo,uboot = "logo.bmp";
+				logo,kernel = "logo_kernel.bmp";
+				logo,mode = "center";
+				charge_logo,mode = "center";
+				connect = <&vp2_out_rgb>;
+			};
+		};
+	};
+};
+
+&dsi0 {
+	status = "okay";
+
+	ports {
+		#address-cells = <0x1>;
+		#size-cells = <0x0>;
+
+		dsi0_in: port@0 {
+			reg = <0x0>;
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+
+			dsi0_in_vp0: endpoint@0 {
+				reg = <0x0>;
+				remote-endpoint = <&vp0_out_dsi0>;
+				status = "disabled";
+			};
+
+			dsi0_in_vp1: endpoint@1 {
+				reg = <0x1>;
+				remote-endpoint = <&vp1_out_dsi0>;
+				status = "okay";
+			};
+		};
+
+		port@1 {
+			reg = <0x1>;
+
+			dsi_out_panel: endpoint {
+				remote-endpoint = <&panel_in_dsi>;
+			};
+		};
+	};
+
+	dsi0_panel: panel@0 {
+		status = "okay";
+		compatible = "simple-panel-dsi";
+		reg = <0x0>;
+		backlight = <&backlight>;
+		/* GPIO0_A5, active low. */
+		reset-gpios = <&gpio0 5 1>;
+		reset-delay-ms = <120>;
+		enable-delay-ms = <220>;
+		prepare-delay-ms = <50>;
+		init-delay-ms = <120>;
+		unprepare-delay-ms = <120>;
+		disable-delay-ms = <120>;
+		dsi,flags = <0xa03>;
+		dsi,format = <0>;
+		dsi,lanes = <4>;
+		/* GPIO0_C5, active high. */
+		enable-gpios = <&gpio0 21 0>;
+		power-supply = <&vcc3v3_lcd0_n>;
+		screen-type = <0x2>;
+
+		display-timings {
+			native-mode = <&dsi0_timing>;
+
+			dsi0_timing: dsi0_timing {
+				clock-frequency = <35500000>;
+				hactive = <720>;
+				vactive = <720>;
+				hback-porch = <30>;
+				hsync-len = <2>;
+				hfront-porch = <24>;
+				vback-porch = <8>;
+				vfront-porch = <16>;
+				vsync-len = <2>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <0>;
+			};
+
+			dsi0_timing_default: timing_default {
+				clock-frequency = <70000000>;
+				hactive = <800>;
+				vactive = <1280>;
+				hfront-porch = <32>;
+				hsync-len = <8>;
+				hback-porch = <8>;
+				vfront-porch = <8>;
+				vsync-len = <4>;
+				vback-porch = <4>;
+				hsync-active = <0>;
+				vsync-active = <0>;
+				de-active = <0>;
+				pixelclk-active = <1>;
+			};
+		};
+
+		ports {
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+
+			port@0 {
+				reg = <0x0>;
+
+				panel_in_dsi: endpoint {
+					remote-endpoint = <&dsi_out_panel>;
+				};
+			};
+		};
+	};
+};
+
+&pwm4 {
+	status = "okay";
+};
+
+&video_phy0 {
+	status = "okay";
+};
+
+&vop {
+	status = "okay";
+};

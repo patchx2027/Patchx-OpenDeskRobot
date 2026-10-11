@@ -1,0 +1,53 @@
+/* SDIO power/reset and wireless wiring from the Android configuration. */
+/ {
+	sdio_pwrseq: sdio-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		clocks = <&rk809 0x1>;
+		clock-names = "ext_clock";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_enable_h>;
+		post-power-on-delay-ms = <400>;
+		power-off-delay-us = <0x7a120>;
+		reset-gpios = <&gpio2 9 1>;
+	};
+
+	wireless_wlan: wireless-wlan {
+		compatible = "wlan-platdata";
+		rockchip,grf = <&grf>;
+		wifi_chip_type = "ap6398s";
+		status = "okay";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wifi_host_wake_irq>;
+		WIFI,host_wake_irq = <&gpio2 0xa 0x0>;
+	};
+
+	wireless_bluetooth: wireless-bluetooth {
+		compatible = "bluetooth-platdata";
+		clocks = <&pmucru 0x5>;
+		clock-names = "ext_clock";
+		status = "okay";
+		pinctrl-names = "default", "rts_gpio";
+		pinctrl-0 = <&uart1m0_rtsn>;
+		pinctrl-1 = <&bt_gpios>;
+		uart_rts_gpios = <&gpio2 0xd 0x1>;
+		BT,reset_gpio = <&gpio2 0xf 0x0>;
+		BT,wake_gpio = <&gpio2 0x11 0x0>;
+		BT,wake_host_irq = <&gpio2 0x10 0x0>;
+	};
+};
+
+&sdmmc1 {
+	max-frequency = <150000000>;
+	status = "okay";
+	supports-sdio;
+	bus-width = <4>;
+	disable-wp;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	mmc-pwrseq = <&sdio_pwrseq>;
+	non-removable;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc1_bus4>, <&sdmmc1_cmd>, <&sdmmc1_clk>;
+	sd-uhs-sdr104;
+};
