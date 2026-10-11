@@ -1,0 +1,3561 @@
+diff --git a/drivers/dma/pl330.c b/drivers/dma/pl330.c
+--- a/drivers/dma/pl330.c
++++ b/drivers/dma/pl330.c
+@@ -17,7 +17,14 @@
+ #include <linux/delay.h>
+ #include <linux/interrupt.h>
+ #include <linux/dma-mapping.h>
++#include <linux/refcount.h>
++#include <linux/ktime.h>
++#include <asm/unaligned.h>
++#include <linux/wait.h>
++#include <linux/mutex.h>
++#include <linux/workqueue.h>
+ #include <linux/dmaengine.h>
++#include <linux/timer.h>
+ #include <linux/amba/bus.h>
+ #include <linux/scatterlist.h>
+ #include <linux/of.h>
+@@ -250,7 +257,7 @@
+ #define MCODE_BUFF_PER_REQ	512
+ 
+ /* Use this _only_ to wait on transient states */
+-#define UNTIL(t, s)	while (!(_state(t) & (s))) cpu_relax();
++/* State waits use pl330_wait_state with an explicit deadline. */
+ 
+ #ifdef PL330_DEBUG_MCGEN
+ static unsigned cmd_line;
+@@ -382,6 +389,8 @@
+ 	unsigned lstenq;
+ 	/* Index of the last submitted request or -1 if the DMA is stopped */
+ 	int req_running;
++	bool accept_callbacks;
++	struct dma_pl330_chan *owner_pch;
+ };
+ 
+ enum pl330_dmac_state {
+@@ -409,6 +418,8 @@
+ 	 * by PL330 core
+ 	 */
+ 	DONE,
++	/* Owner retained until software drain and STOPPED are proved. */
++	RETIRED,
+ };
+ 
+ struct dma_pl330_chan {
+@@ -452,6 +463,30 @@
+ 
+ 	/* for runtime pm tracking */
+ 	bool active;
++	/* Lifecycle fields protected by lock; producers/runners are waitable. */
++	u64 epoch;
++	bool quiescing;
++	bool runner_active;
++	bool rerun;
++	bool tasklet_queued;
++	u64 tasklet_epoch;
++	bool pm_ref_held;
++	struct list_head retired_list;
++	atomic_t producers;
++	atomic_t runners;
++	atomic_t preparations;
++	atomic_t prepared_descs;
++	atomic_t faults;
++	atomic_t issuers;
++	atomic_t operations;
++	bool preparing;
++	struct dma_slave_config fifo_config;
++	enum dma_transfer_direction prepared_direction;
++	wait_queue_head_t drain_wait;
++	struct mutex sync_mutex;
++	struct work_struct gc_work;
++	bool gc_queued;
++	atomic_t gc_users;
+ };
+ 
+ struct pl330_dmac {
+@@ -460,6 +495,7 @@
+ 
+ 	/* Pool of descriptors available for the DMAC's channels */
+ 	struct list_head desc_pool;
++	struct list_head desc_blocks;
+ 	/* To protect desc_pool manipulation */
+ 	spinlock_t pool_lock;
+ 
+@@ -494,6 +530,22 @@
+ 	struct dma_pl330_chan *peripherals; /* keep at end */
+ 	int quirks;
+ 
++	/* First hardware lifecycle error, protected by controller lock. */
++	int lifecycle_error;
++	atomic_t owned_descs;
++	bool stop_proven;
++	u64 stop_reads;
++	struct timer_list reader_timer;
++	bool pm_failed;
++	bool removing;
++	bool irq_ready;
++	unsigned int irqs_registered;
++	bool system_suspended;
++	bool fault_tasklet_queued;
++	atomic_t irq_users;
++	atomic_t producers;
++	wait_queue_head_t drain_wait;
++
+ 	struct reset_control	*rstc;
+ 	struct reset_control	*rstc_ocp;
+ };
+@@ -531,6 +583,11 @@
+ 
+ 	/* The channel which currently holds this desc */
+ 	struct dma_pl330_chan *pchan;
++	/* Immutable until the final borrowed reference has drained. */
++	struct dma_pl330_chan *owner_pch;
++	u64 owner_epoch;
++	refcount_t refs;
++	bool prepared_owned;
+ 
+ 	enum dma_transfer_direction rqtype;
+ 	/* Index of peripheral for the xfer. */
+@@ -562,6 +619,14 @@
+ 	return thrd->req[0].desc != NULL && thrd->req[1].desc != NULL;
+ }
+ 
++struct pl330_desc_block {
++	struct list_head node;
++	struct dma_pl330_desc *descs;
++};
++
++static void __noreturn pl330_failstop(struct pl330_dmac *pl330,
++					 const char *reason);
++
+ static inline bool is_manager(struct pl330_thread *thrd)
+ {
+ 	return thrd->dmac->manager == thrd;
+@@ -885,35 +950,35 @@
+ #define msecs_to_loops(t) (loops_per_jiffy / 1000 * HZ * t)
+ 
+ /* Returns Time-Out */
++static void pl330_error_locked(struct pl330_dmac *pl330, int error);
++
+ static bool _until_dmac_idle(struct pl330_thread *thrd)
+ {
+ 	void __iomem *regs = thrd->dmac->base;
+-	unsigned long loops = msecs_to_loops(5);
++	ktime_t deadline = ktime_add_ms(ktime_get(), 5);
+ 
+ 	do {
+-		/* Until Manager is Idle */
+ 		if (!(readl(regs + DBGSTATUS) & DBG_BUSY))
+-			break;
+-
++			return false;
+ 		cpu_relax();
+-	} while (--loops);
+-
+-	if (!loops)
+-		return true;
+-
+-	return false;
+-}
+-
+-static inline void _execute_DBGINSN(struct pl330_thread *thrd,
++	} while (ktime_compare(ktime_get(), deadline) < 0);
++	return true;
++}
++
++static inline int _execute_DBGINSN(struct pl330_thread *thrd,
+ 		u8 insn[], bool as_manager)
+ {
+ 	void __iomem *regs = thrd->dmac->base;
+ 	u32 val;
++
++	if (thrd->dmac->pm_failed)
++		return thrd->dmac->lifecycle_error;
+ 
+ 	/* If timed out due to halted state-machine */
+ 	if (_until_dmac_idle(thrd)) {
+ 		dev_err(thrd->dmac->ddma.dev, "DMAC halted!\n");
+-		return;
++		pl330_error_locked(thrd->dmac, -ETIMEDOUT);
++		return -ETIMEDOUT;
+ 	}
+ 
+ 	val = (insn[0] << 16) | (insn[1] << 24);
+@@ -923,17 +988,21 @@
+ 	}
+ 	writel(val, regs + DBGINST0);
+ 
+-	val = le32_to_cpu(*((__le32 *)&insn[2]));
++	val = get_unaligned_le32(&insn[2]);
+ 	writel(val, regs + DBGINST1);
+ 
+ 	/* Get going */
+ 	writel(0, regs + DBGCMD);
++	return 0;
+ }
+ 
+ static inline u32 _state(struct pl330_thread *thrd)
+ {
+ 	void __iomem *regs = thrd->dmac->base;
+ 	u32 val;
++
++	if (thrd->dmac->pm_failed)
++		return PL330_STATE_INVALID;
+ 
+ 	if (is_manager(thrd))
+ 		val = readl(regs + DS) & 0xf;
+@@ -988,30 +1057,59 @@
+ 	}
+ }
+ 
+-static void _stop(struct pl330_thread *thrd)
+-{
+-	void __iomem *regs = thrd->dmac->base;
++/* Caller holds the controller lock; this atomic wait always has a deadline. */
++static int pl330_wait_state(struct pl330_thread *thrd, u32 states,
++			    unsigned int timeout_ms)
++{
++	ktime_t deadline = ktime_add_ms(ktime_get(), timeout_ms);
++
++	if (thrd->dmac->pm_failed)
++		return thrd->dmac->lifecycle_error;
++	do {
++		if (_state(thrd) & states)
++			return 0;
++		cpu_relax();
++	} while (ktime_compare(ktime_get(), deadline) < 0);
++	pl330_error_locked(thrd->dmac, -ETIMEDOUT);
++	return -ETIMEDOUT;
++}
++
++static int _stop(struct pl330_thread *thrd)
++{
++	struct pl330_dmac *pl330 = thrd->dmac;
++	void __iomem *regs = pl330->base;
+ 	u8 insn[6] = {0, 0, 0, 0, 0, 0};
+-	u32 inten = readl(regs + INTEN);
+-
+-	if (_state(thrd) == PL330_STATE_FAULT_COMPLETING)
+-		UNTIL(thrd, PL330_STATE_FAULTING | PL330_STATE_KILLING);
+-
+-	/* Return if nothing needs to be done */
+-	if (_state(thrd) == PL330_STATE_COMPLETING
+-		  || _state(thrd) == PL330_STATE_KILLING
+-		  || _state(thrd) == PL330_STATE_STOPPED)
+-		return;
+-
++	u32 state, inten;
++	int ret;
++
++	thrd->dmac->stop_proven = false;
++
++	if (pl330->pm_failed)
++		return pl330->lifecycle_error;
++	/* Cut the event even when a KILL is already in progress or STOPPED. */
++	if (!is_manager(thrd)) {
++		inten = readl(regs + INTEN);
++		writel(inten & ~(1U << thrd->ev), regs + INTEN);
++		writel(1U << thrd->ev, regs + INTCLR);
++	}
++	state = _state(thrd);
++	if (state == PL330_STATE_FAULT_COMPLETING) {
++		ret = pl330_wait_state(thrd, PL330_STATE_FAULTING |
++			PL330_STATE_KILLING | PL330_STATE_STOPPED, 5);
++		if (ret)
++			return ret;
++		state = _state(thrd);
++	}
++	if (state == PL330_STATE_COMPLETING || state == PL330_STATE_KILLING ||
++	    state == PL330_STATE_STOPPED)
++		return 0;
++	if (state == PL330_STATE_INVALID) {
++		pl330_error_locked(pl330, -EIO);
++		return -EIO;
++	}
+ 	_emit_KILL(0, insn);
+-
+-	_execute_DBGINSN(thrd, insn, is_manager(thrd));
+-
+-	/* clear the event */
+-	if (inten & (1 << thrd->ev))
+-		writel(1 << thrd->ev, regs + INTCLR);
+-	/* Stop generating interrupts for SEV */
+-	writel(inten & ~(1 << thrd->ev), regs + INTEN);
++	/* A successful request is distinct from the process-context STOPPED proof. */
++	return _execute_DBGINSN(thrd, insn, is_manager(thrd));
+ }
+ 
+ /* Start doing req 'idx' of thread 'thrd' */
+@@ -1023,7 +1121,11 @@
+ 	struct _arg_GO go;
+ 	unsigned ns;
+ 	u8 insn[6] = {0, 0, 0, 0, 0, 0};
+-	int idx;
++	int idx, ret;
++	u32 inten;
++
++	if (thrd->dmac->lifecycle_error || !thrd->accept_callbacks)
++		return false;
+ 
+ 	/* Return if already ACTIVE */
+ 	if (_state(thrd) != PL330_STATE_STOPPED)
+@@ -1063,10 +1165,16 @@
+ 	_emit_GO(0, insn, &go);
+ 
+ 	/* Set to generate interrupts for SEV */
+-	writel(readl(regs + INTEN) | (1 << thrd->ev), regs + INTEN);
++	inten = readl(regs + INTEN);
++	writel(inten | (1U << thrd->ev), regs + INTEN);
+ 
+ 	/* Only manager can execute GO */
+-	_execute_DBGINSN(thrd, insn, true);
++	ret = _execute_DBGINSN(thrd, insn, true);
++	if (ret) {
++		writel(inten & ~(1U << thrd->ev), regs + INTEN);
++		writel(1U << thrd->ev, regs + INTCLR);
++		return false;
++	}
+ 
+ 	thrd->req_running = idx;
+ 
+@@ -1075,26 +1183,33 @@
+ 
+ static bool _start(struct pl330_thread *thrd)
+ {
++	int ret;
++
++	thrd->dmac->stop_proven = false;
++
++	if (thrd->dmac->lifecycle_error || !thrd->accept_callbacks)
++		return false;
+ 	switch (_state(thrd)) {
+ 	case PL330_STATE_FAULT_COMPLETING:
+-		UNTIL(thrd, PL330_STATE_FAULTING | PL330_STATE_KILLING);
+-
+-		if (_state(thrd) == PL330_STATE_KILLING)
+-			UNTIL(thrd, PL330_STATE_STOPPED)
++		ret = pl330_wait_state(thrd, PL330_STATE_FAULTING |
++			PL330_STATE_KILLING | PL330_STATE_STOPPED, 5);
++		if (ret)
++			return false;
++		if (_state(thrd) == PL330_STATE_KILLING &&
++		    pl330_wait_state(thrd, PL330_STATE_STOPPED, 5))
++			return false;
+ 		fallthrough;
+-
+ 	case PL330_STATE_FAULTING:
+-		_stop(thrd);
++		if (_stop(thrd))
++			return false;
+ 		fallthrough;
+-
+ 	case PL330_STATE_KILLING:
+ 	case PL330_STATE_COMPLETING:
+-		UNTIL(thrd, PL330_STATE_STOPPED)
++		if (pl330_wait_state(thrd, PL330_STATE_STOPPED, 5))
++			return false;
+ 		fallthrough;
+-
+ 	case PL330_STATE_STOPPED:
+ 		return _trigger(thrd);
+-
+ 	case PL330_STATE_WFP:
+ 	case PL330_STATE_QUEUEBUSY:
+ 	case PL330_STATE_ATBARRIER:
+@@ -1102,9 +1217,10 @@
+ 	case PL330_STATE_CACHEMISS:
+ 	case PL330_STATE_EXECUTING:
+ 		return true;
+-
+-	case PL330_STATE_WFE: /* For RESUME, nothing yet */
++	case PL330_STATE_WFE:
+ 	default:
++		/* Every execution producer must expose an actual START refusal. */
++		pl330_error_locked(thrd->dmac, -EIO);
+ 		return false;
+ 	}
+ }
+@@ -1709,6 +1825,12 @@
+ 	}
+ 
+ 	spin_lock_irqsave(&pl330->lock, flags);
++	if (pl330->lifecycle_error || !thrd->accept_callbacks ||
++	    desc->owner_pch != thrd->owner_pch ||
++	    desc->owner_epoch != thrd->owner_pch->epoch) {
++		ret = -EIO;
++		goto xfer_exit;
++	}
+ 
+ 	if (_queue_full(thrd)) {
+ 		ret = -EAGAIN;
+@@ -1753,6 +1875,94 @@
+ 	return ret;
+ }
+ 
++/* Controller-locked producers borrow before dropping the controller lock. */
++static void pl330_error_locked(struct pl330_dmac *pl330, int error)
++{
++	pl330->stop_proven = false;
++	if (!pl330->lifecycle_error)
++		pl330->lifecycle_error = error;
++}
++
++static void pl330_pm_error_locked(struct pl330_dmac *pl330, int error)
++{
++	pl330_error_locked(pl330, error);
++	pl330->pm_failed = true;
++}
++
++static struct dma_pl330_desc *pl330_desc_get(struct dma_pl330_desc *desc)
++{
++	if (!desc || !refcount_inc_not_zero(&desc->refs))
++		return NULL;
++	atomic_inc(&desc->owner_pch->producers);
++	return desc;
++}
++
++static void pl330_desc_put(struct dma_pl330_desc *desc)
++{
++	struct dma_pl330_chan *owner = desc->owner_pch;
++
++	/* The queue/preparation owner reference remains until checked release. */
++	WARN_ON(refcount_dec_and_test(&desc->refs));
++	atomic_dec(&owner->producers);
++	wake_up_all(&owner->drain_wait);
++	wake_up_all(&owner->dmac->drain_wait);
++}
++
++/* No channel/controller lock may be held while taking the public pool lock. */
++static void pl330_desc_release(struct pl330_dmac *pl330,
++			       struct dma_pl330_desc *desc)
++{
++	unsigned long flags;
++
++	if (WARN_ON(refcount_read(&desc->refs) != 1))
++		return;
++	if (WARN_ON(!refcount_dec_and_test(&desc->refs)))
++		return;
++	if (desc->prepared_owned) {
++		atomic_dec(&desc->owner_pch->prepared_descs);
++		desc->prepared_owned = false;
++	}
++	if (desc->owner_pch)
++		atomic_dec(&pl330->owned_descs);
++	dma_descriptor_unmap(&desc->txd);
++	desc->status = FREE;
++	desc->pchan = NULL;
++	desc->owner_pch = NULL;
++	spin_lock_irqsave(&pl330->pool_lock, flags);
++	list_add_tail(&desc->node, &pl330->desc_pool);
++	spin_unlock_irqrestore(&pl330->pool_lock, flags);
++}
++
++static void __pl330_giveback_desc(struct pl330_dmac *pl330,
++				struct dma_pl330_desc *first)
++{
++	struct dma_pl330_desc *desc;
++
++	if (!first)
++		return;
++	while (!list_empty(&first->node)) {
++		desc = list_first_entry(&first->node, struct dma_pl330_desc, node);
++		list_del_init(&desc->node);
++		pl330_desc_release(pl330, desc);
++	}
++	INIT_LIST_HEAD(&first->node);
++	pl330_desc_release(pl330, first);
++}
++
++static void pl330_schedule_locked(struct dma_pl330_chan *pch)
++{
++	if (pch->quiescing || READ_ONCE(pch->dmac->lifecycle_error))
++		return;
++	if (pch->runner_active) {
++		pch->rerun = true;
++		return;
++	}
++	if (!pch->tasklet_queued)
++		pch->tasklet_epoch = pch->epoch;
++	pch->tasklet_queued = true;
++	tasklet_schedule(&pch->task);
++}
++
+ static void dma_pl330_rqcb(struct dma_pl330_desc *desc, enum pl330_op_err err)
+ {
+ 	struct dma_pl330_chan *pch;
+@@ -1760,20 +1970,15 @@
+ 
+ 	if (!desc)
+ 		return;
+-
+-	pch = desc->pchan;
+-
+-	/* If desc aborted */
+-	if (!pch)
+-		return;
+-
++	pch = desc->owner_pch;
+ 	spin_lock_irqsave(&pch->lock, flags);
+-
+-	desc->status = DONE;
+-
++	if (!pch->quiescing && desc->owner_epoch == pch->epoch &&
++	    !READ_ONCE(pch->dmac->lifecycle_error)) {
++		desc->status = DONE;
++		pl330_schedule_locked(pch);
++	}
+ 	spin_unlock_irqrestore(&pch->lock, flags);
+-
+-	tasklet_schedule(&pch->task);
++	pl330_desc_put(desc);
+ }
+ 
+ static void pl330_dotask(struct tasklet_struct *t)
+@@ -1781,11 +1986,20 @@
+ 	struct pl330_dmac *pl330 = from_tasklet(pl330, t, tasks);
+ 	unsigned long flags;
+ 	int i;
++	atomic_inc(&pl330->producers);
+ 
+ 	spin_lock_irqsave(&pl330->lock, flags);
++	pl330->fault_tasklet_queued = false;
++	if (pl330->pm_failed || pl330->removing || pl330->system_suspended) {
++		pl330->dmac_tbd.reset_dmac = false;
++		pl330->dmac_tbd.reset_mngr = false;
++		pl330->dmac_tbd.reset_chan = 0;
++		goto out;
++	}
+ 
+ 	/* The DMAC itself gone nuts */
+ 	if (pl330->dmac_tbd.reset_dmac) {
++		pl330_error_locked(pl330, -EIO);
+ 		pl330->state = DYING;
+ 		/* Reset the manager too */
+ 		pl330->dmac_tbd.reset_mngr = true;
+@@ -1794,6 +2008,7 @@
+ 	}
+ 
+ 	if (pl330->dmac_tbd.reset_mngr) {
++		pl330_error_locked(pl330, -EIO);
+ 		_stop(pl330->manager);
+ 		/* Reset all channels */
+ 		pl330->dmac_tbd.reset_chan = (1 << pl330->pcfg.num_chan) - 1;
+@@ -1803,11 +2018,22 @@
+ 
+ 	for (i = 0; i < pl330->pcfg.num_chan; i++) {
+ 
++		/* PM can fail on another channel while a prior rqcb was unlocked. */
++		if (pl330->pm_failed || pl330->removing || pl330->system_suspended)
++			goto out;
+ 		if (pl330->dmac_tbd.reset_chan & (1 << i)) {
+ 			struct pl330_thread *thrd = &pl330->channels[i];
+ 			void __iomem *regs = pl330->base;
+ 			enum pl330_op_err err;
+ 
++			struct dma_pl330_desc *first, *second;
++			struct dma_pl330_chan *owner = thrd->owner_pch;
++
++			if (!thrd->accept_callbacks) {
++				pl330->dmac_tbd.reset_chan &= ~(1U << i);
++				continue;
++			}
++			atomic_inc(&owner->faults);
+ 			_stop(thrd);
+ 
+ 			if (readl(regs + FSC) & (1 << thrd->id))
+@@ -1815,21 +2041,32 @@
+ 			else
+ 				err = PL330_ERR_ABORT;
+ 
+-			spin_unlock_irqrestore(&pl330->lock, flags);
+-			dma_pl330_rqcb(thrd->req[1 - thrd->lstenq].desc, err);
+-			dma_pl330_rqcb(thrd->req[thrd->lstenq].desc, err);
+-			spin_lock_irqsave(&pl330->lock, flags);
+-
++			/* Capture both before unlocking; req[] may belong to a new epoch later. */
++			first = thrd->accept_callbacks ?
++				pl330_desc_get(thrd->req[1 - thrd->lstenq].desc) : NULL;
++			second = thrd->accept_callbacks ?
++				pl330_desc_get(thrd->req[thrd->lstenq].desc) : NULL;
+ 			thrd->req[0].desc = NULL;
+ 			thrd->req[1].desc = NULL;
+ 			thrd->req_running = -1;
+-
+-			/* Clear the reset flag */
+-			pl330->dmac_tbd.reset_chan &= ~(1 << i);
++			/* Finish the captured epoch's controller cleanup before any put. */
++			pl330->dmac_tbd.reset_chan &= ~(1U << i);
++			spin_unlock_irqrestore(&pl330->lock, flags);
++			dma_pl330_rqcb(first, err);
++			dma_pl330_rqcb(second, err);
++			spin_lock_irqsave(&pl330->lock, flags);
++
++			/* The lease includes this final controller-lock acquisition. */
++			atomic_dec(&owner->faults);
++			wake_up_all(&owner->drain_wait);
++			/* A newly published reset bit belongs to the next captured work. */
+ 		}
+ 	}
+ 
++out:
+ 	spin_unlock_irqrestore(&pl330->lock, flags);
++	atomic_dec(&pl330->producers);
++	wake_up_all(&pl330->drain_wait);
+ 
+ 	return;
+ }
+@@ -1845,20 +2082,25 @@
+ 
+ 	regs = pl330->base;
+ 
++	atomic_inc(&pl330->producers);
+ 	spin_lock_irqsave(&pl330->lock, flags);
++	if (pl330->pm_failed || pl330->removing || pl330->system_suspended)
++		goto updt_exit;
+ 
+ 	val = readl(regs + FSM) & 0x1;
+-	if (val)
++	if (val) {
++		pl330_error_locked(pl330, -EIO);
+ 		pl330->dmac_tbd.reset_mngr = true;
+-	else
+-		pl330->dmac_tbd.reset_mngr = false;
++	}
+ 
+ 	val = readl(regs + FSC) & ((1 << pl330->pcfg.num_chan) - 1);
+-	pl330->dmac_tbd.reset_chan |= val;
++	/* Channel fault publication is admitted only through its current gate. */
+ 	if (val) {
+ 		int i = 0;
+ 		while (i < pl330->pcfg.num_chan) {
+-			if (val & (1 << i)) {
++			if ((val & (1 << i)) && pl330->channels[i].accept_callbacks) {
++				pl330->dmac_tbd.reset_chan |= 1U << i;
++				pl330_error_locked(pl330, -EIO);
+ 				dev_info(pl330->ddma.dev,
+ 					"Reset Channel-%d\t CS-%x FTC-%x\n",
+ 						i, readl(regs + CS(i)),
+@@ -1873,6 +2115,7 @@
+ 	val = readl(regs + ES);
+ 	if (pl330->pcfg.num_events < 32
+ 			&& val & ~((1 << pl330->pcfg.num_events) - 1)) {
++		pl330_error_locked(pl330, -EIO);
+ 		pl330->dmac_tbd.reset_dmac = true;
+ 		dev_err(pl330->ddma.dev, "%s:%d Unexpected!\n", __func__,
+ 			__LINE__);
+@@ -1893,6 +2136,9 @@
+ 			ret = 1;
+ 
+ 			id = pl330->events[ev];
++			/* A masked old event can coexist with another channel's IRQ. */
++			if (id < 0 || id >= pl330->pcfg.num_chan)
++				continue;
+ 
+ 			thrd = &pl330->channels[id];
+ 
+@@ -1902,16 +2148,20 @@
+ 
+ 			/* Detach the req */
+ 			descdone = thrd->req[active].desc;
+-			if (descdone) {
++			if (descdone && thrd->accept_callbacks) {
+ 				if (!descdone->cyclic) {
+ 					thrd->req[active].desc = NULL;
+ 					thrd->req_running = -1;
+ 					/* Get going again ASAP */
+-					_start(thrd);
++					if (!pl330->lifecycle_error)
++						_start(thrd);
+ 				}
+ 
+ 				/* For now, just make a list of callbacks to be done */
+-				list_add_tail(&descdone->rqd, &pl330->req_done);
++				if (list_empty(&descdone->rqd)) {
++					pl330_desc_get(descdone);
++					list_add_tail(&descdone->rqd, &pl330->req_done);
++				}
+ 			}
+ 		}
+ 	}
+@@ -1920,22 +2170,24 @@
+ 	while (!list_empty(&pl330->req_done)) {
+ 		descdone = list_first_entry(&pl330->req_done,
+ 					    struct dma_pl330_desc, rqd);
+-		list_del(&descdone->rqd);
++		list_del_init(&descdone->rqd);
+ 		spin_unlock_irqrestore(&pl330->lock, flags);
+ 		dma_pl330_rqcb(descdone, PL330_ERR_NONE);
+ 		spin_lock_irqsave(&pl330->lock, flags);
+ 	}
+ 
+ updt_exit:
+-	spin_unlock_irqrestore(&pl330->lock, flags);
+-
+ 	if (pl330->dmac_tbd.reset_dmac
+ 			|| pl330->dmac_tbd.reset_mngr
+ 			|| pl330->dmac_tbd.reset_chan) {
+ 		ret = 1;
++		pl330->fault_tasklet_queued = true;
+ 		tasklet_schedule(&pl330->tasks);
+ 	}
+ 
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	atomic_dec(&pl330->producers);
++	wake_up_all(&pl330->drain_wait);
+ 	return ret;
+ }
+ 
+@@ -2008,10 +2260,11 @@
+ 	if (!thrd || thrd->free)
+ 		return;
+ 
+-	_stop(thrd);
+-
+-	dma_pl330_rqcb(thrd->req[1 - thrd->lstenq].desc, PL330_ERR_ABORT);
+-	dma_pl330_rqcb(thrd->req[thrd->lstenq].desc, PL330_ERR_ABORT);
++	/* Caller already proved STOPPED and software drain with admission closed. */
++
++	WARN_ON(thrd->req[0].desc || thrd->req[1].desc);
++	thrd->accept_callbacks = false;
++	thrd->owner_pch = NULL;
+ 
+ 	_free_event(thrd, thrd->ev);
+ 	thrd->free = true;
+@@ -2165,10 +2418,6 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	spin_lock_init(&pl330->lock);
+-
+-	INIT_LIST_HEAD(&pl330->req_done);
+-
+ 	/* Use default MC buffer size if not provided */
+ 	if (!pl330->mcbufsz)
+ 		pl330->mcbufsz = MCODE_BUFF_PER_REQ * 2;
+@@ -2210,6 +2459,12 @@
+ 
+ static void pl330_del(struct pl330_dmac *pl330)
+ {
++	struct pl330_desc_block *block, *next;
++	LIST_HEAD(blocks);
++	unsigned long flags;
++
++	if (atomic_read(&pl330->owned_descs))
++		pl330_failstop(pl330, "destroy has a descriptor owner");
+ 	pl330->state = UNINIT;
+ 
+ 	tasklet_kill(&pl330->tasks);
+@@ -2220,6 +2475,18 @@
+ 	dma_free_attrs(pl330->ddma.dev,
+ 		pl330->pcfg.num_chan * pl330->mcbufsz, pl330->mcode_cpu,
+ 		pl330->mcode_bus, DMA_ATTR_PRIVILEGED);
++	/* All clients and software/hardware owners have been drained by the caller. */
++	spin_lock_irqsave(&pl330->pool_lock, flags);
++	INIT_LIST_HEAD(&pl330->desc_pool);
++	list_splice_tail_init(&pl330->desc_blocks, &blocks);
++	spin_unlock_irqrestore(&pl330->pool_lock, flags);
++	list_for_each_entry_safe(block, next, &blocks, node) {
++		list_del(&block->node);
++		kfree(block->descs);
++		kfree(block);
++	}
++	kfree(pl330->peripherals);
++	pl330->peripherals = NULL;
+ }
+ 
+ /* forward declaration */
+@@ -2262,83 +2529,104 @@
+ 			desc->status = DONE;
+ 			dev_err(pch->dmac->ddma.dev, "%s:%d Bad Desc(%d)\n",
+ 					__func__, __LINE__, desc->txd.cookie);
+-			tasklet_schedule(&pch->task);
++			spin_lock(&pch->dmac->lock);
++			pl330_error_locked(pch->dmac, ret);
++			spin_unlock(&pch->dmac->lock);
++			pl330_schedule_locked(pch);
+ 		}
+ 	}
+ }
+ 
+-static void pl330_tasklet(struct tasklet_struct *t)
+-{
+-	struct dma_pl330_chan *pch = from_tasklet(pch, t, task);
+-	struct dma_pl330_desc *desc, *_dt;
++static void pl330_gc_schedule_locked(struct dma_pl330_chan *pch)
++{
++	if (pch->quiescing || READ_ONCE(pch->dmac->lifecycle_error) ||
++	    READ_ONCE(pch->dmac->removing) || READ_ONCE(pch->dmac->system_suspended) ||
++	    pch->gc_queued || atomic_read(&pch->gc_users) ||
++	    list_empty(&pch->retired_list) || !list_empty(&pch->work_list) ||
++	    !list_empty(&pch->submitted_list))
++		return;
++	pch->gc_queued = true;
++	schedule_work(&pch->gc_work);
++}
++
++static void pl330_run(struct dma_pl330_chan *pch, bool from_tasklet,
++			 u64 expected_epoch)
++{
++	struct dma_pl330_desc *desc;
++	struct dmaengine_desc_callback cb;
+ 	unsigned long flags;
+-	bool power_down = false;
++	u64 epoch;
+ 
+ 	spin_lock_irqsave(&pch->lock, flags);
+-
+-	/* Pick up ripe tomatoes */
+-	list_for_each_entry_safe(desc, _dt, &pch->work_list, node) {
+-		if (desc->status == DONE) {
+-			if (!desc->cyclic) {
+-				dma_cookie_complete(&desc->txd);
+-				list_move_tail(&desc->node, &pch->completed_list);
+-			} else {
+-				struct dmaengine_desc_callback cb;
+-
+-				desc->status = BUSY;
+-				dmaengine_desc_get_callback(&desc->txd, &cb);
+-
+-				if (dmaengine_desc_callback_valid(&cb)) {
+-					spin_unlock_irqrestore(&pch->lock, flags);
+-					dmaengine_desc_callback_invoke(&cb, NULL);
+-					spin_lock_irqsave(&pch->lock, flags);
+-				}
+-			}
++	if (from_tasklet)
++		pch->tasklet_queued = false;
++	if (pch->quiescing || pch->epoch != expected_epoch ||
++	    READ_ONCE(pch->dmac->lifecycle_error) || !pch->thread)
++		goto unlock;
++	if (pch->runner_active) {
++		pch->rerun = true;
++		goto unlock;
++	}
++	pch->runner_active = true;
++	atomic_inc(&pch->runners);
++	epoch = pch->epoch;
++
++again:
++	pch->rerun = false;
++restart:
++	if (pch->quiescing || pch->epoch != epoch || READ_ONCE(pch->dmac->lifecycle_error))
++		goto done;
++	/* Never retain a list iterator across a callback's unlocked interval. */
++	list_for_each_entry(desc, &pch->work_list, node) {
++		if (desc->status != DONE)
++			continue;
++		if (desc->cyclic) {
++			desc->status = BUSY;
++		} else {
++			dma_cookie_complete(&desc->txd);
++			desc->status = RETIRED;
++			list_move_tail(&desc->node, &pch->retired_list);
+ 		}
+-	}
+-
+-	/* Try to submit a req imm. next to the last completed cookie */
++		pl330_desc_get(desc);
++		dmaengine_desc_get_callback(&desc->txd, &cb);
++		spin_unlock_irqrestore(&pch->lock, flags);
++		if (dmaengine_desc_callback_valid(&cb))
++			dmaengine_desc_callback_invoke(&cb, NULL);
++		pl330_desc_put(desc);
++		spin_lock_irqsave(&pch->lock, flags);
++		goto restart;
++	}
++
+ 	fill_queue(pch);
+-
++	spin_lock(&pch->dmac->lock);
++	/* Another channel may have failed PM after the entry check. */
++	if (pch->dmac->lifecycle_error || !pch->thread->accept_callbacks) {
++		spin_unlock(&pch->dmac->lock);
++		goto done;
++	}
+ 	if (list_empty(&pch->work_list)) {
+-		spin_lock(&pch->thread->dmac->lock);
+ 		_stop(pch->thread);
+-		spin_unlock(&pch->thread->dmac->lock);
+-		power_down = pch->active;
+ 		pch->active = false;
+ 	} else {
+-		/* Make sure the PL330 Channel thread is active */
+-		spin_lock(&pch->thread->dmac->lock);
+ 		_start(pch->thread);
+-		spin_unlock(&pch->thread->dmac->lock);
+-	}
+-
+-	while (!list_empty(&pch->completed_list)) {
+-		struct dmaengine_desc_callback cb;
+-
+-		desc = list_first_entry(&pch->completed_list,
+-					struct dma_pl330_desc, node);
+-
+-		dmaengine_desc_get_callback(&desc->txd, &cb);
+-
+-		desc->status = FREE;
+-		list_move_tail(&desc->node, &pch->dmac->desc_pool);
+-
+-		dma_descriptor_unmap(&desc->txd);
+-
+-		if (dmaengine_desc_callback_valid(&cb)) {
+-			spin_unlock_irqrestore(&pch->lock, flags);
+-			dmaengine_desc_callback_invoke(&cb, NULL);
+-			spin_lock_irqsave(&pch->lock, flags);
+-		}
+-	}
++	}
++	spin_unlock(&pch->dmac->lock);
++	if (pch->rerun)
++		goto again;
++done:
++	pch->runner_active = false;
++	atomic_dec(&pch->runners);
++unlock:
++	pl330_gc_schedule_locked(pch);
+ 	spin_unlock_irqrestore(&pch->lock, flags);
+-
+-	/* If work list empty, power down */
+-	if (power_down) {
+-		pm_runtime_mark_last_busy(pch->dmac->ddma.dev);
+-		pm_runtime_put_autosuspend(pch->dmac->ddma.dev);
+-	}
++	wake_up_all(&pch->drain_wait);
++}
++
++static void pl330_tasklet(struct tasklet_struct *t)
++{
++	struct dma_pl330_chan *pch = from_tasklet(pch, t, task);
++
++	pl330_run(pch, true, READ_ONCE(pch->tasklet_epoch));
+ }
+ 
+ static struct dma_chan *of_dma_pl330_xlate(struct of_phandle_args *dma_spec,
+@@ -2366,22 +2654,33 @@
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 	struct pl330_dmac *pl330 = pch->dmac;
+ 	unsigned long flags;
+-
+-	spin_lock_irqsave(&pl330->lock, flags);
+-
++	int ret;
++
++	spin_lock_irqsave(&pch->lock, flags);
++	spin_lock(&pl330->lock);
++	ret = pl330->lifecycle_error;
++	if (!ret && pl330->system_suspended)
++		ret = -EBUSY;
++	if (!ret && (pl330->removing || pl330->state == DYING))
++		ret = -ENODEV;
++	if (ret)
++		goto unlock;
+ 	dma_cookie_init(chan);
+-
+ 	pch->thread = pl330_request_channel(pl330);
+ 	if (!pch->thread) {
+-		spin_unlock_irqrestore(&pl330->lock, flags);
+-		return -ENOMEM;
+-	}
+-
++		ret = -ENOMEM;
++		goto unlock;
++	}
++	pch->epoch++;
++	pch->quiescing = false;
++	pch->thread->owner_pch = pch;
++	pch->thread->accept_callbacks = true;
+ 	tasklet_setup(&pch->task, pl330_tasklet);
+-
+-	spin_unlock_irqrestore(&pl330->lock, flags);
+-
+-	return 1;
++	ret = 1;
++unlock:
++	spin_unlock(&pl330->lock);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	return ret;
+ }
+ 
+ /*
+@@ -2481,54 +2780,113 @@
+ {
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 
+-	memcpy(&pch->slave_config, slave_config, sizeof(*slave_config));
+-
+-	return 0;
++	unsigned long flags;
++	int ret = 0;
++
++	spin_lock_irqsave(&pch->lock, flags);
++	if (pch->quiescing || READ_ONCE(pch->dmac->lifecycle_error))
++		ret = -EIO;
++	else if (pch->preparing)
++		ret = -EBUSY;
++	else
++		memcpy(&pch->slave_config, slave_config, sizeof(*slave_config));
++	spin_unlock_irqrestore(&pch->lock, flags);
++
++	return ret;
++}
++
++static int pl330_terminate_channel(struct dma_chan *chan)
++{
++	struct dma_pl330_chan *pch = to_pchan(chan);
++	struct pl330_dmac *pl330 = pch->dmac;
++	struct dma_pl330_desc *desc, *next;
++	unsigned long flags;
++	bool put_pm = false, failed_get = false;
++	int ret;
++
++	/* This controller uses IRQ-safe PM, but PM is never inside a spinlock. */
++	ret = pm_runtime_get_sync(pl330->ddma.dev);
++	spin_lock_irqsave(&pch->lock, flags);
++	spin_lock(&pl330->lock);
++	if (ret < 0) {
++		pl330_pm_error_locked(pl330, ret);
++		failed_get = true;
++	}
++	spin_unlock(&pl330->lock);
++	if (ret >= 0 && !pch->pm_ref_held && !READ_ONCE(pl330->lifecycle_error))
++		pch->pm_ref_held = true;
++	else if (ret >= 0)
++		put_pm = true;
++	if (!pch->quiescing) {
++		pch->quiescing = true;
++		pch->epoch++;
++	}
++	pch->rerun = false;
++	spin_lock(&pl330->lock);
++	if (pch->thread) {
++		pch->thread->accept_callbacks = false;
++		if (!pl330->pm_failed)
++			_stop(pch->thread);
++		/* Revoke queued fault work for this physical thread at cutoff. */
++		pl330->dmac_tbd.reset_chan &= ~(1U << pch->thread->id);
++		pch->thread->req[0].desc = NULL;
++		pch->thread->req[1].desc = NULL;
++		pch->thread->req_running = -1;
++	}
++	list_for_each_entry_safe(desc, next, &pl330->req_done, rqd) {
++		if (desc->owner_pch == pch) {
++			list_del_init(&desc->rqd);
++			pl330_desc_put(desc);
++		}
++	}
++	spin_unlock(&pl330->lock);
++	pch->active = false;
++	list_splice_tail_init(&pch->submitted_list, &pch->retired_list);
++	list_splice_tail_init(&pch->work_list, &pch->retired_list);
++	list_splice_tail_init(&pch->completed_list, &pch->retired_list);
++	list_for_each_entry(desc, &pch->retired_list, node) {
++		desc->status = RETIRED;
++		/* Noncyclic DONE was completed before its callback; cookie is then 0. */
++		if (desc->txd.cookie >= DMA_MIN_COOKIE)
++			dma_cookie_complete(&desc->txd);
++	}
++	spin_unlock_irqrestore(&pch->lock, flags);
++	if (failed_get)
++		pm_runtime_put_noidle(pl330->ddma.dev);
++	if (put_pm) {
++		pm_runtime_mark_last_busy(pl330->ddma.dev);
++		pm_runtime_put_autosuspend(pl330->ddma.dev);
++	}
++	wake_up_all(&pch->drain_wait);
++	return READ_ONCE(pl330->lifecycle_error);
+ }
+ 
+ static int pl330_terminate_all(struct dma_chan *chan)
+ {
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+-	struct dma_pl330_desc *desc;
+ 	unsigned long flags;
+-	struct pl330_dmac *pl330 = pch->dmac;
+-	bool power_down = false;
+-
+-	pm_runtime_get_sync(pl330->ddma.dev);
++	int ret;
++
++	/* Public IRQ/callback-safe admission precedes any unlocked PM access.
++	 * Close the epoch here so checked/free cannot pass this admitted operation.
++	 * Repeated termination behind cutoff does not publish another old operation.
++	 */
+ 	spin_lock_irqsave(&pch->lock, flags);
+-
+-	spin_lock(&pl330->lock);
+-	_stop(pch->thread);
+-	pch->thread->req[0].desc = NULL;
+-	pch->thread->req[1].desc = NULL;
+-	pch->thread->req_running = -1;
+-	spin_unlock(&pl330->lock);
+-
+-	power_down = pch->active;
+-	pch->active = false;
+-
+-	/* Mark all desc done */
+-	list_for_each_entry(desc, &pch->submitted_list, node) {
+-		desc->status = FREE;
+-		dma_cookie_complete(&desc->txd);
+-	}
+-
+-	list_for_each_entry(desc, &pch->work_list , node) {
+-		desc->status = FREE;
+-		dma_cookie_complete(&desc->txd);
+-	}
+-
+-	list_splice_tail_init(&pch->submitted_list, &pl330->desc_pool);
+-	list_splice_tail_init(&pch->work_list, &pl330->desc_pool);
+-	list_splice_tail_init(&pch->completed_list, &pl330->desc_pool);
++	if (pch->quiescing || !pch->thread) {
++		ret = READ_ONCE(pch->dmac->lifecycle_error);
++		spin_unlock_irqrestore(&pch->lock, flags);
++		return ret;
++	}
++	atomic_inc(&pch->operations);
++	pch->quiescing = true;
++	pch->epoch++;
+ 	spin_unlock_irqrestore(&pch->lock, flags);
+-	pm_runtime_mark_last_busy(pl330->ddma.dev);
+-	if (power_down)
+-		pm_runtime_put_autosuspend(pl330->ddma.dev);
+-	pm_runtime_put_autosuspend(pl330->ddma.dev);
+-
+-	return 0;
+-}
++	ret = pl330_terminate_channel(chan);
++	atomic_dec(&pch->operations);
++	wake_up_all(&pch->drain_wait);
++	return ret;
++}
++
+ 
+ /*
+  * We don't support DMA_RESUME command because of hardware
+@@ -2537,45 +2895,342 @@
+  * DMA transfer again. This pause feature was implemented to
+  * allow safely read residue before channel termination.
+  */
+-static int pl330_pause(struct dma_chan *chan)
++static void __noreturn pl330_failstop(struct pl330_dmac *pl330,
++				      const char *reason)
++{
++	/* Software owners cannot be released, and this kernel must not warm reboot. */
++	panic_timeout = 0;
++	panic("PL330 %s unsafe lifecycle: %s", dev_name(pl330->ddma.dev), reason);
++}
++
++static bool pl330_software_drained_locked(struct dma_pl330_chan *pch)
++{
++	return !atomic_read(&pch->producers) && !atomic_read(&pch->runners) &&
++		!atomic_read(&pch->issuers) && !atomic_read(&pch->operations) &&
++		!atomic_read(&pch->preparations) &&
++		!atomic_read(&pch->faults) && !pch->tasklet_queued &&
++		!atomic_read(&pch->gc_users) && !pch->gc_queued;
++}
++
++static bool pl330_software_drained(struct dma_pl330_chan *pch)
++{
++	unsigned long flags;
++	bool drained;
++
++	spin_lock_irqsave(&pch->lock, flags);
++	drained = pl330_software_drained_locked(pch);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	return drained;
++}
++
++/* A negative return is allowed only after every old software user has drained. */
++static void pl330_gc_work(struct work_struct *work)
++{
++	struct dma_pl330_chan *pch = container_of(work, struct dma_pl330_chan, gc_work);
++	struct pl330_dmac *pl330 = pch->dmac;
++	struct dma_pl330_desc *desc, *next;
++	LIST_HEAD(reclaim);
++	unsigned long flags;
++	ktime_t deadline;
++	bool put_owned = false, retry;
++	int pm_ret;
++
++	spin_lock_irqsave(&pch->lock, flags);
++	pch->gc_queued = false;
++	atomic_inc(&pch->gc_users);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	pm_ret = pm_runtime_get_sync(pl330->ddma.dev);
++	if (pm_ret < 0) {
++		spin_lock_irqsave(&pl330->lock, flags);
++		pl330_pm_error_locked(pl330, pm_ret);
++		spin_unlock_irqrestore(&pl330->lock, flags);
++		pm_runtime_put_noidle(pl330->ddma.dev);
++		goto done;
++	}
++	deadline = ktime_add_ms(ktime_get(), 20);
++	for (;;) {
++		retry = false;
++		spin_lock_irqsave(&pch->lock, flags);
++		spin_lock(&pl330->lock);
++		if (pch->quiescing || pl330->lifecycle_error || pl330->removing ||
++		    pl330->system_suspended || !pch->thread ||
++		    !list_empty(&pch->work_list) || !list_empty(&pch->submitted_list))
++			goto unlock;
++		/* Exclude this worker's sole gc_users lease from the old-user proof. */
++		if (atomic_read(&pch->producers) || atomic_read(&pch->runners) ||
++		    atomic_read(&pch->issuers) || atomic_read(&pch->operations) ||
++		    atomic_read(&pch->preparations) || atomic_read(&pch->faults) ||
++		    pch->tasklet_queued || pch->thread->req[0].desc ||
++		    pch->thread->req[1].desc) {
++			retry = true;
++			goto unlock;
++		}
++		if ((readl(pl330->base + FSM) & 1) ||
++		    (readl(pl330->base + FSC) & ((1U << pl330->pcfg.num_chan) - 1))) {
++			pl330_error_locked(pl330, -EIO);
++			goto unlock;
++		}
++		if (pl330->dmac_tbd.reset_dmac || pl330->dmac_tbd.reset_mngr ||
++		    pl330->dmac_tbd.reset_chan ||
++		    _state(pch->thread) != PL330_STATE_STOPPED) {
++			retry = true;
++			goto unlock;
++		}
++		list_for_each_entry(desc, &pch->retired_list, node)
++			if (refcount_read(&desc->refs) != 1)
++				goto unlock;
++		/* No old request or old software user can reach these detached owners. */
++		list_splice_tail_init(&pch->retired_list, &reclaim);
++		if (pch->pm_ref_held) {
++			pch->pm_ref_held = false;
++			put_owned = true;
++		}
++unlock:
++		spin_unlock(&pl330->lock);
++		spin_unlock_irqrestore(&pch->lock, flags);
++		if (!retry || ktime_compare(ktime_get(), deadline) >= 0)
++			break;
++		usleep_range(50, 100);
++	}
++	/* New admission may now publish a new request; it cannot reach this local list. */
++	list_for_each_entry_safe(desc, next, &reclaim, node) {
++		list_del_init(&desc->node);
++		pl330_desc_release(pl330, desc);
++	}
++	if (put_owned) {
++		pm_runtime_mark_last_busy(pl330->ddma.dev);
++		pm_runtime_put_autosuspend(pl330->ddma.dev);
++	}
++	pm_runtime_mark_last_busy(pl330->ddma.dev);
++	pm_runtime_put_autosuspend(pl330->ddma.dev);
++done:
++	spin_lock_irqsave(&pch->lock, flags);
++	atomic_dec(&pch->gc_users);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	wake_up_all(&pch->drain_wait);
++}
++
++static void pl330_capture_stop_locked(struct pl330_dmac *pl330)
++{
++	struct pl330_thread *thread;
++	bool stopped = true;
++	int i;
++
++	for (i = 0; i <= pl330->pcfg.num_chan; i++) {
++		thread = i == pl330->pcfg.num_chan ? pl330->manager : &pl330->channels[i];
++		pl330->stop_reads++;
++		if (_state(thread) != PL330_STATE_STOPPED)
++			stopped = false;
++	}
++	pl330->stop_proven = stopped;
++}
++
++static int pl330_sync_channel(struct dma_chan *chan, bool reopen)
++{
++	struct dma_pl330_chan *pch = to_pchan(chan);
++	struct pl330_dmac *pl330 = pch->dmac;
++	struct dma_pl330_desc *desc, *next;
++	LIST_HEAD(reclaim);
++	ktime_t deadline;
++	unsigned long flags;
++	bool put_pm = false, stopped;
++	int ret;
++
++	might_sleep();
++	mutex_lock(&pch->sync_mutex);
++	/* Also covers PREPARE/HW_FREE after a failed START with no stop_operating. */
++	/* Private cutoff is not an operation that would wait for itself. */
++	pl330_terminate_channel(chan);
++	if (!wait_event_timeout(pch->drain_wait, pl330_software_drained(pch),
++				msecs_to_jiffies(500)))
++		pl330_failstop(pl330, "software drain deadline");
++	deadline = ktime_add_ms(ktime_get(), 20);
++	for (;;) {
++		spin_lock_irqsave(&pl330->lock, flags);
++		ret = pl330->lifecycle_error;
++		if (!ret && ((readl(pl330->base + FSM) & 1) ||
++		    (readl(pl330->base + FSC) & ((1U << pl330->pcfg.num_chan) - 1)))) {
++			pl330_error_locked(pl330, -EIO);
++			ret = pl330->lifecycle_error;
++		}
++		stopped = !ret && (!pch->thread ||
++			_state(pch->thread) == PL330_STATE_STOPPED);
++		spin_unlock_irqrestore(&pl330->lock, flags);
++		if (ret)
++			goto out;
++		if (stopped)
++			break;
++		if (ktime_compare(ktime_get(), deadline) >= 0) {
++			spin_lock_irqsave(&pl330->lock, flags);
++			pl330_error_locked(pl330, -ETIMEDOUT);
++			ret = pl330->lifecycle_error;
++			spin_unlock_irqrestore(&pl330->lock, flags);
++			goto out;
++		}
++		usleep_range(50, 100);
++	}
++
++	/* Linearize proof with all producers and keep admission closed during reclaim. */
++	spin_lock_irqsave(&pch->lock, flags);
++	spin_lock(&pl330->lock);
++	ret = pl330->lifecycle_error;
++	if (!pl330_software_drained_locked(pch))
++		pl330_failstop(pl330, "software users appeared behind cutoff");
++	if (!ret && ((pch->thread && _state(pch->thread) != PL330_STATE_STOPPED) ||
++	    (readl(pl330->base + FSM) & 1) ||
++	    (readl(pl330->base + FSC) & ((1U << pl330->pcfg.num_chan) - 1)))) {
++		pl330_error_locked(pl330, -EIO);
++		ret = pl330->lifecycle_error;
++	}
++	if (!ret) {
++		pl330_capture_stop_locked(pl330);
++		list_splice_tail_init(&pch->retired_list, &reclaim);
++	}
++	spin_unlock(&pl330->lock);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	if (ret)
++		goto out;
++	list_for_each_entry_safe(desc, next, &reclaim, node) {
++		list_del_init(&desc->node);
++		if (refcount_read(&desc->refs) != 1)
++			pl330_failstop(pl330, "retired descriptor still borrowed");
++		pl330_desc_release(pl330, desc);
++	}
++	spin_lock_irqsave(&pch->lock, flags);
++	if (pch->pm_ref_held) {
++		pch->pm_ref_held = false;
++		put_pm = true;
++	}
++	spin_unlock_irqrestore(&pch->lock, flags);
++	if (put_pm) {
++		pm_runtime_mark_last_busy(pl330->ddma.dev);
++		pm_runtime_put_autosuspend(pl330->ddma.dev);
++	}
++	spin_lock_irqsave(&pch->lock, flags);
++	spin_lock(&pl330->lock);
++	ret = pl330->lifecycle_error;
++	if (!ret && reopen) {
++		pch->quiescing = false;
++		if (pch->thread)
++			pch->thread->accept_callbacks = true;
++	}
++	spin_unlock(&pl330->lock);
++	spin_unlock_irqrestore(&pch->lock, flags);
++out:
++	mutex_unlock(&pch->sync_mutex);
++	return ret;
++}
++
++/* Held core channel references keep this controller alive during open. */
++static int pl330_check_open(struct dma_chan *chan)
+ {
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 	struct pl330_dmac *pl330 = pch->dmac;
+ 	unsigned long flags;
+-
+-	pm_runtime_get_sync(pl330->ddma.dev);
++	int ret;
++
++	/* Cached admission only: never acquire PM or touch hardware here. */
++	spin_lock_irqsave(&pl330->lock, flags);
++	ret = pl330->lifecycle_error;
++	if (!ret && (pl330->removing || pl330->system_suspended ||
++		     READ_ONCE(pl330->ddma.lifecycle_closing)))
++		ret = -EBUSY;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	return ret;
++}
++
++static int pl330_synchronize_checked(struct dma_chan *chan)
++{
++	return pl330_sync_channel(chan, true);
++}
++
++static void pl330_synchronize(struct dma_chan *chan)
++{
++	if (pl330_synchronize_checked(chan))
++		pl330_failstop(to_pchan(chan)->dmac, "void synchronize cannot transfer owner");
++}
++
++/* Admit before PM; checked synchronization waits through the last PM put. */
++static int pl330_operation_begin(struct dma_pl330_chan *pch, u64 *epoch)
++{
++	unsigned long flags;
++	int ret;
++
+ 	spin_lock_irqsave(&pch->lock, flags);
+-
+-	spin_lock(&pl330->lock);
+-	_stop(pch->thread);
+-	spin_unlock(&pl330->lock);
+-
++	ret = READ_ONCE(pch->dmac->lifecycle_error);
++	if (!ret && (pch->quiescing || !pch->thread))
++		ret = -EIO;
++	if (!ret) {
++		*epoch = pch->epoch;
++		atomic_inc(&pch->operations);
++	}
+ 	spin_unlock_irqrestore(&pch->lock, flags);
+-	pm_runtime_mark_last_busy(pl330->ddma.dev);
+-	pm_runtime_put_autosuspend(pl330->ddma.dev);
+-
+-	return 0;
+-}
+-
+-static void pl330_free_chan_resources(struct dma_chan *chan)
++	return ret;
++}
++
++static void pl330_operation_end(struct dma_pl330_chan *pch)
++{
++	atomic_dec(&pch->operations);
++	wake_up_all(&pch->drain_wait);
++}
++
++static int pl330_pause(struct dma_chan *chan)
+ {
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 	struct pl330_dmac *pl330 = pch->dmac;
+ 	unsigned long flags;
+-
++	u64 epoch;
++	int ret, pm_ret;
++
++	ret = pl330_operation_begin(pch, &epoch);
++	if (ret)
++		return ret;
++	pm_ret = pm_runtime_get_sync(pl330->ddma.dev);
++	spin_lock_irqsave(&pch->lock, flags);
++	spin_lock(&pl330->lock);
++	if (pm_ret < 0)
++		pl330_pm_error_locked(pl330, pm_ret);
++	ret = pl330->lifecycle_error;
++	if (!ret && (pch->quiescing || pch->epoch != epoch))
++		ret = -EIO;
++	if (!ret)
++		ret = _stop(pch->thread);
++	spin_unlock(&pl330->lock);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	if (pm_ret < 0)
++		pm_runtime_put_noidle(pl330->ddma.dev);
++	else {
++		pm_runtime_mark_last_busy(pl330->ddma.dev);
++		pm_runtime_put_autosuspend(pl330->ddma.dev);
++	}
++	pl330_operation_end(pch);
++	return ret;
++}
++
++static void pl330_free_chan_resources(struct dma_chan *chan)
++{
++	struct dma_pl330_chan *pch = to_pchan(chan);
++	struct pl330_dmac *pl330 = pch->dmac;
++	unsigned long flags;
++
++	/* The void DMA core path cannot transfer the client's allocation owner. */
++	if (pl330_sync_channel(chan, false))
++		pl330_failstop(pl330, "free channel stop proof");
++	spin_lock_irqsave(&pch->lock, flags);
++	if (atomic_read(&pch->prepared_descs))
++		pl330_failstop(pl330, "free channel has a private prepared owner");
++	spin_unlock_irqrestore(&pch->lock, flags);
++	/* No new queued tasklet can pass the still-closed admission gate. */
++	cancel_work_sync(&pch->gc_work);
+ 	tasklet_kill(&pch->task);
+-
+-	pm_runtime_get_sync(pch->dmac->ddma.dev);
+-	spin_lock_irqsave(&pl330->lock, flags);
+-
++	spin_lock_irqsave(&pch->lock, flags);
++	spin_lock(&pl330->lock);
++	if (pl330->lifecycle_error || !pl330_software_drained_locked(pch))
++		pl330_failstop(pl330, "channel release behind cutoff");
+ 	pl330_release_channel(pch->thread);
+ 	pch->thread = NULL;
+-
+-	list_splice_tail_init(&pch->work_list, &pch->dmac->desc_pool);
+-
+-	spin_unlock_irqrestore(&pl330->lock, flags);
+-	pm_runtime_mark_last_busy(pch->dmac->ddma.dev);
+-	pm_runtime_put_autosuspend(pch->dmac->ddma.dev);
++	spin_unlock(&pl330->lock);
++	spin_unlock_irqrestore(&pch->lock, flags);
+ 	pl330_unprep_slave_fifo(pch);
+ }
+ 
+@@ -2583,11 +3238,10 @@
+ 					   struct dma_pl330_desc *desc)
+ {
+ 	struct pl330_thread *thrd = pch->thread;
+-	struct pl330_dmac *pl330 = pch->dmac;
+ 	void __iomem *regs = thrd->dmac->base;
+ 	u32 val, addr;
+ 
+-	pm_runtime_get_sync(pl330->ddma.dev);
++	/* Caller holds controller lock and an admitted, successful PM lease. */
+ 	val = addr = 0;
+ 	if (desc->rqcfg.src_inc) {
+ 		val = readl(regs + SA(thrd->id));
+@@ -2596,8 +3250,6 @@
+ 		val = readl(regs + DA(thrd->id));
+ 		addr = desc->px.dst_addr;
+ 	}
+-	pm_runtime_mark_last_busy(pch->dmac->ddma.dev);
+-	pm_runtime_put_autosuspend(pl330->ddma.dev);
+ 
+ 	/* If DMAMOV hasn't finished yet, SAR/DAR can be zero */
+ 	if (!val)
+@@ -2615,7 +3267,12 @@
+ 	struct dma_pl330_desc *desc, *running = NULL, *last_enq = NULL;
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 	unsigned int transferred, residual = 0;
+-
++	struct pl330_dmac *pl330 = pch->dmac;
++	u64 epoch;
++	int pm_ret;
++
++	if (READ_ONCE(pl330->lifecycle_error))
++		return DMA_ERROR;
+ 	ret = dma_cookie_status(chan, cookie, txstate);
+ 
+ 	if (!txstate)
+@@ -2624,8 +3281,17 @@
+ 	if (ret == DMA_COMPLETE)
+ 		goto out;
+ 
++	if (pl330_operation_begin(pch, &epoch))
++		return DMA_ERROR;
++	pm_ret = pm_runtime_get_sync(pl330->ddma.dev);
+ 	spin_lock_irqsave(&pch->lock, flags);
+-	spin_lock(&pch->thread->dmac->lock);
++	spin_lock(&pl330->lock);
++	if (pm_ret < 0)
++		pl330_pm_error_locked(pl330, pm_ret);
++	if (pl330->lifecycle_error || pch->quiescing || pch->epoch != epoch) {
++		ret = DMA_ERROR;
++		goto unlock;
++	}
+ 
+ 	if (pch->thread->req_running != -1)
+ 		running = pch->thread->req[pch->thread->req_running].desc;
+@@ -2668,8 +3334,16 @@
+ 		if (desc->last)
+ 			residual = 0;
+ 	}
+-	spin_unlock(&pch->thread->dmac->lock);
++unlock:
++	spin_unlock(&pl330->lock);
+ 	spin_unlock_irqrestore(&pch->lock, flags);
++	if (pm_ret < 0)
++		pm_runtime_put_noidle(pl330->ddma.dev);
++	else {
++		pm_runtime_mark_last_busy(pl330->ddma.dev);
++		pm_runtime_put_autosuspend(pl330->ddma.dev);
++	}
++	pl330_operation_end(pch);
+ 
+ out:
+ 	dma_set_residue(txstate, residual);
+@@ -2681,22 +3355,58 @@
+ {
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 	unsigned long flags;
+-
++	bool put_pm = false, run = false;
++	u64 epoch;
++	int ret;
++
++	/* Admission covers PM and the unlocked interval before the direct runner. */
+ 	spin_lock_irqsave(&pch->lock, flags);
+-	if (list_empty(&pch->work_list)) {
+-		/*
+-		 * Warn on nothing pending. Empty submitted_list may
+-		 * break our pm_runtime usage counter as it is
+-		 * updated on work_list emptiness status.
+-		 */
+-		WARN_ON(list_empty(&pch->submitted_list));
+-		pch->active = true;
+-		pm_runtime_get_sync(pch->dmac->ddma.dev);
+-	}
++	if (pch->quiescing || READ_ONCE(pch->dmac->lifecycle_error) ||
++	    !pch->thread || list_empty(&pch->submitted_list)) {
++		spin_unlock_irqrestore(&pch->lock, flags);
++		return;
++	}
++	epoch = pch->epoch;
++	atomic_inc(&pch->issuers);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	ret = pm_runtime_get_sync(pch->dmac->ddma.dev);
++	spin_lock_irqsave(&pch->lock, flags);
++	if (ret < 0) {
++		spin_lock(&pch->dmac->lock);
++		pl330_pm_error_locked(pch->dmac, ret);
++		spin_unlock(&pch->dmac->lock);
++	}
++	if (ret < 0 || pch->quiescing || pch->epoch != epoch ||
++	    READ_ONCE(pch->dmac->lifecycle_error) ||
++	    list_empty(&pch->submitted_list)) {
++		put_pm = true;
++		goto unlock;
++	}
++	if (!pch->pm_ref_held)
++		pch->pm_ref_held = true;
++	else
++		put_pm = true;
++	pch->active = true;
+ 	list_splice_tail_init(&pch->submitted_list, &pch->work_list);
++	run = true;
++unlock:
+ 	spin_unlock_irqrestore(&pch->lock, flags);
+-
+-	pl330_tasklet(&pch->task);
++	if (put_pm) {
++		if (ret < 0)
++			pm_runtime_put_noidle(pch->dmac->ddma.dev);
++		else {
++			pm_runtime_mark_last_busy(pch->dmac->ddma.dev);
++			pm_runtime_put_autosuspend(pch->dmac->ddma.dev);
++		}
++	}
++	/* Preserve DMA-before-CPU startup without a second concurrent runner. */
++	if (run)
++		pl330_run(pch, false, epoch);
++	spin_lock_irqsave(&pch->lock, flags);
++	atomic_dec(&pch->issuers);
++	pl330_gc_schedule_locked(pch);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	wake_up_all(&pch->drain_wait);
+ }
+ 
+ /*
+@@ -2712,6 +3422,20 @@
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&pch->lock, flags);
++	if (pch->quiescing || READ_ONCE(pch->dmac->lifecycle_error) ||
++	    last->owner_pch != pch || last->owner_epoch != pch->epoch) {
++		goto reject;
++	}
++	list_for_each_entry(desc, &last->node, node) {
++		if (desc->owner_pch != pch || desc->owner_epoch != pch->epoch)
++			goto reject;
++	}
++	goto valid;
++reject:
++		spin_unlock_irqrestore(&pch->lock, flags);
++		__pl330_giveback_desc(pch->dmac, last);
++		return -EIO;
++valid:;
+ 
+ 	/* Assign cookies to all nodes */
+ 	while (!list_empty(&last->node)) {
+@@ -2719,11 +3443,19 @@
+ 
+ 		desc->last = false;
+ 
++		if (desc->prepared_owned) {
++			atomic_dec(&pch->prepared_descs);
++			desc->prepared_owned = false;
++		}
+ 		dma_cookie_assign(&desc->txd);
+ 
+ 		list_move_tail(&desc->node, &pch->submitted_list);
+ 	}
+ 
++	if (last->prepared_owned) {
++		atomic_dec(&pch->prepared_descs);
++		last->prepared_owned = false;
++	}
+ 	last->last = true;
+ 	cookie = dma_cookie_assign(&last->txd);
+ 	list_add_tail(&last->node, &pch->submitted_list);
+@@ -2740,19 +3472,33 @@
+ 	desc->txd.tx_submit = pl330_tx_submit;
+ 
+ 	INIT_LIST_HEAD(&desc->node);
++	INIT_LIST_HEAD(&desc->rqd);
++	refcount_set(&desc->refs, 0);
+ }
+ 
+ /* Returns the number of descriptors added to the DMAC pool */
+-static int add_desc(struct list_head *pool, spinlock_t *lock,
++static int add_desc(struct pl330_dmac *pl330,
++		    struct list_head *pool, spinlock_t *lock,
+ 		    gfp_t flg, int count)
+ {
+ 	struct dma_pl330_desc *desc;
++	struct pl330_desc_block *block;
+ 	unsigned long flags;
+ 	int i;
+ 
++	block = kzalloc(sizeof(*block), flg);
++	if (!block)
++		return 0;
+ 	desc = kcalloc(count, sizeof(*desc), flg);
+-	if (!desc)
++	if (!desc) {
++		kfree(block);
+ 		return 0;
++	}
++	block->descs = desc;
++	/* A preparation lease protects this publication until checkout finishes. */
++	spin_lock_irqsave(&pl330->pool_lock, flags);
++	list_add_tail(&block->node, &pl330->desc_blocks);
++	spin_unlock_irqrestore(&pl330->pool_lock, flags);
+ 
+ 	spin_lock_irqsave(lock, flags);
+ 
+@@ -2782,6 +3528,8 @@
+ 
+ 		desc->status = PREP;
+ 		desc->txd.callback = NULL;
++		desc->txd.callback_result = NULL;
++		desc->txd.callback_param = NULL;
+ 	}
+ 
+ 	spin_unlock_irqrestore(lock, flags);
+@@ -2794,6 +3542,10 @@
+ 	struct pl330_dmac *pl330 = pch->dmac;
+ 	u8 *peri_id = pch->chan.private;
+ 	struct dma_pl330_desc *desc;
++	unsigned long flags;
++
++	if (READ_ONCE(pch->quiescing) || READ_ONCE(pl330->lifecycle_error))
++		return NULL;
+ 
+ 	/* Pluck one desc from the pool of DMAC */
+ 	desc = pluck_desc(&pl330->desc_pool, &pl330->pool_lock);
+@@ -2803,15 +3555,29 @@
+ 		static DEFINE_SPINLOCK(lock);
+ 		LIST_HEAD(pool);
+ 
+-		if (!add_desc(&pool, &lock, GFP_ATOMIC, 1))
++		if (!add_desc(pl330, &pool, &lock, GFP_ATOMIC, 1))
+ 			return NULL;
+ 
+ 		desc = pluck_desc(&pool, &lock);
+ 		WARN_ON(!desc || !list_empty(&pool));
+ 	}
+ 
+-	/* Initialize the descriptor */
++	spin_lock_irqsave(&pch->lock, flags);
++	if (pch->quiescing || READ_ONCE(pl330->lifecycle_error)) {
++		spin_unlock_irqrestore(&pch->lock, flags);
++		refcount_set(&desc->refs, 1);
++		pl330_desc_release(pl330, desc);
++		return NULL;
++	}
++	/* Initialize once per checkout, before transferring to the submit queue. */
+ 	desc->pchan = pch;
++	desc->owner_pch = pch;
++	desc->owner_epoch = pch->epoch;
++	refcount_set(&desc->refs, 1);
++	desc->prepared_owned = true;
++	atomic_inc(&pch->prepared_descs);
++	atomic_inc(&pl330->owned_descs);
++	spin_unlock_irqrestore(&pch->lock, flags);
+ 	desc->txd.cookie = 0;
+ 	async_tx_ack(&desc->txd);
+ 
+@@ -2879,6 +3645,70 @@
+ 	return burst_len;
+ }
+ 
++/* A preparation owns config/FIFO state until its complete chain is built. */
++static bool pl330_fifo_config_same(struct dma_pl330_chan *pch,
++				 enum dma_transfer_direction direction)
++{
++	const struct dma_slave_config *a = &pch->fifo_config;
++	const struct dma_slave_config *b = &pch->slave_config;
++
++#ifdef CONFIG_NO_GKI
++	if (a->src_interlace_size != b->src_interlace_size ||
++	    a->dst_interlace_size != b->dst_interlace_size)
++		return false;
++#endif
++	if (direction == DMA_MEM_TO_DEV)
++		return a->dst_addr == b->dst_addr &&
++			a->dst_addr_width == b->dst_addr_width &&
++			a->dst_maxburst == b->dst_maxburst;
++	return a->src_addr == b->src_addr &&
++		a->src_addr_width == b->src_addr_width &&
++		a->src_maxburst == b->src_maxburst;
++}
++
++static bool pl330_prep_begin(struct dma_pl330_chan *pch,
++			    enum dma_transfer_direction direction, bool slave,
++			    u64 *epoch, bool *reuse_fifo)
++{
++	unsigned long flags;
++	bool inflight;
++
++	*reuse_fifo = false;
++	spin_lock_irqsave(&pch->lock, flags);
++	if (pch->quiescing || !pch->thread || READ_ONCE(pch->dmac->lifecycle_error) || pch->preparing)
++		goto reject;
++	inflight = pch->active || !list_empty(&pch->submitted_list) ||
++		!list_empty(&pch->work_list) || !list_empty(&pch->retired_list) ||
++		atomic_read(&pch->prepared_descs);
++	if (slave && inflight) {
++		/* Queued SG with the identical immutable FIFO config remains legal. */
++		if (pch->dir == DMA_NONE || pch->prepared_direction != direction ||
++		    !pl330_fifo_config_same(pch, direction))
++			goto reject;
++		*reuse_fifo = true;
++	}
++	pch->preparing = true;
++	atomic_inc(&pch->preparations);
++	*epoch = pch->epoch;
++	spin_unlock_irqrestore(&pch->lock, flags);
++	return true;
++reject:
++	spin_unlock_irqrestore(&pch->lock, flags);
++	return false;
++}
++
++static void pl330_prep_end(struct dma_pl330_chan *pch)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&pch->lock, flags);
++	pch->preparing = false;
++	atomic_dec(&pch->preparations);
++	spin_unlock_irqrestore(&pch->lock, flags);
++	wake_up_all(&pch->drain_wait);
++	wake_up_all(&pch->dmac->drain_wait);
++}
++
+ static struct dma_async_tx_descriptor *pl330_prep_dma_cyclic(
+ 		struct dma_chan *chan, dma_addr_t dma_addr, size_t len,
+ 		size_t period_len, enum dma_transfer_direction direction,
+@@ -2888,8 +3718,10 @@
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 	dma_addr_t dst = 0;
+ 	dma_addr_t src = 0;
+-
+-	if (len % period_len != 0)
++	u64 epoch;
++	bool reuse_fifo;
++
++	if (!len || !period_len || len % period_len != 0)
+ 		return NULL;
+ 
+ 	if (!is_slave_direction(direction)) {
+@@ -2898,16 +3730,25 @@
+ 		return NULL;
+ 	}
+ 
+-	pl330_config_write(chan, &pch->slave_config, direction);
+-
+-	if (!pl330_prep_slave_fifo(pch, direction))
++	if (!pl330_prep_begin(pch, direction, true, &epoch, &reuse_fifo))
+ 		return NULL;
++	if (!reuse_fifo) {
++		pl330_config_write(chan, &pch->slave_config, direction);
++		if (!pl330_prep_slave_fifo(pch, direction))
++			goto out;
++		pch->fifo_config = pch->slave_config;
++		pch->prepared_direction = direction;
++	}
+ 
+ 	desc = pl330_get_desc(pch);
+ 	if (!desc) {
+ 		dev_err(pch->dmac->ddma.dev, "%s:%d Unable to fetch desc\n",
+ 			__func__, __LINE__);
+-		return NULL;
++		goto out;
++	}
++	if (desc->owner_epoch != epoch) {
++		__pl330_giveback_desc(pch->dmac, desc);
++		goto out;
+ 	}
+ 
+ 	switch (direction) {
+@@ -2940,7 +3781,11 @@
+ 	desc->src_interlace_size = pch->slave_config.src_interlace_size;
+ 	desc->dst_interlace_size = pch->slave_config.dst_interlace_size;
+ #endif
++	pl330_prep_end(pch);
+ 	return &desc->txd;
++out:
++	pl330_prep_end(pch);
++	return NULL;
+ }
+ 
+ static struct dma_async_tx_descriptor *
+@@ -2951,15 +3796,23 @@
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 	struct pl330_dmac *pl330;
+ 	int burst;
++	u64 epoch;
++	bool reuse_fifo;
+ 
+ 	if (unlikely(!pch || !len))
+ 		return NULL;
+ 
++	if (!pl330_prep_begin(pch, DMA_MEM_TO_MEM, false, &epoch, &reuse_fifo))
++		return NULL;
+ 	pl330 = pch->dmac;
+ 
+ 	desc = __pl330_prep_dma_memcpy(pch, dst, src, len);
+ 	if (!desc)
+-		return NULL;
++		goto out;
++	if (desc->owner_epoch != epoch) {
++		__pl330_giveback_desc(pl330, desc);
++		goto out;
++	}
+ 
+ 	desc->rqcfg.src_inc = 1;
+ 	desc->rqcfg.dst_inc = 1;
+@@ -2992,30 +3845,14 @@
+ 
+ 	desc->txd.flags = flags;
+ 
++	pl330_prep_end(pch);
+ 	return &desc->txd;
+-}
+-
+-static void __pl330_giveback_desc(struct pl330_dmac *pl330,
+-				  struct dma_pl330_desc *first)
+-{
+-	unsigned long flags;
+-	struct dma_pl330_desc *desc;
+-
+-	if (!first)
+-		return;
+-
+-	spin_lock_irqsave(&pl330->pool_lock, flags);
+-
+-	while (!list_empty(&first->node)) {
+-		desc = list_entry(first->node.next,
+-				struct dma_pl330_desc, node);
+-		list_move_tail(&desc->node, &pl330->desc_pool);
+-	}
+-
+-	list_move_tail(&first->node, &pl330->desc_pool);
+-
+-	spin_unlock_irqrestore(&pl330->pool_lock, flags);
+-}
++out:
++	pl330_prep_end(pch);
++	return NULL;
++}
++
++
+ 
+ static struct dma_async_tx_descriptor *
+ pl330_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
+@@ -3026,14 +3863,22 @@
+ 	struct dma_pl330_chan *pch = to_pchan(chan);
+ 	struct scatterlist *sg;
+ 	int i;
++	u64 epoch;
++	bool reuse_fifo;
+ 
+ 	if (unlikely(!pch || !sgl || !sg_len))
+ 		return NULL;
+ 
+-	pl330_config_write(chan, &pch->slave_config, direction);
+-
+-	if (!pl330_prep_slave_fifo(pch, direction))
++	if (!is_slave_direction(direction) ||
++	    !pl330_prep_begin(pch, direction, true, &epoch, &reuse_fifo))
+ 		return NULL;
++	if (!reuse_fifo) {
++		pl330_config_write(chan, &pch->slave_config, direction);
++		if (!pl330_prep_slave_fifo(pch, direction))
++			goto out;
++		pch->fifo_config = pch->slave_config;
++		pch->prepared_direction = direction;
++	}
+ 
+ 	first = NULL;
+ 
+@@ -3048,7 +3893,13 @@
+ 				__func__, __LINE__);
+ 			__pl330_giveback_desc(pl330, first);
+ 
+-			return NULL;
++			goto out;
++		}
++
++		if (desc->owner_epoch != epoch) {
++			__pl330_giveback_desc(pch->dmac, desc);
++			__pl330_giveback_desc(pch->dmac, first);
++			goto out;
+ 		}
+ 
+ 		if (!first)
+@@ -3080,15 +3931,31 @@
+ 
+ 	/* Return the last desc in the chain */
+ 	desc->txd.flags = flg;
++	pl330_prep_end(pch);
+ 	return &desc->txd;
++out:
++	pl330_prep_end(pch);
++	return NULL;
+ }
+ 
+ static irqreturn_t pl330_irq_handler(int irq, void *data)
+ {
+-	if (pl330_update(data))
+-		return IRQ_HANDLED;
+-	else
+-		return IRQ_NONE;
++	struct pl330_dmac *pl330 = data;
++	irqreturn_t ret = IRQ_NONE;
++
++	atomic_inc(&pl330->irq_users);
++	if (!READ_ONCE(pl330->irq_ready) || READ_ONCE(pl330->removing) || READ_ONCE(pl330->system_suspended))
++		goto out;
++	/* A pending IRQ after autosuspend must not access unpowered registers. */
++	if (pm_runtime_get_if_in_use(pl330->ddma.dev) <= 0)
++		goto out;
++	ret = pl330_update(pl330) ? IRQ_HANDLED : IRQ_NONE;
++	pm_runtime_mark_last_busy(pl330->ddma.dev);
++	pm_runtime_put_autosuspend(pl330->ddma.dev);
++out:
++	atomic_dec(&pl330->irq_users);
++	wake_up_all(&pl330->drain_wait);
++	return ret;
+ }
+ 
+ #define PL330_DMA_BUSWIDTHS \
+@@ -3137,6 +4004,11 @@
+ 
+ static inline void init_pl330_debugfs(struct pl330_dmac *pl330)
+ {
++	/* This checked profile does not publish the old unowned debugfs reader.
++	 * Its raw controller/channel pointers cannot outlive destructive removal.
++	 */
++	if (pl330->ddma.device_synchronize_checked)
++		return;
+ 	debugfs_create_file(dev_name(pl330->ddma.dev),
+ 			    S_IFREG | 0444, NULL, pl330,
+ 			    &pl330_debugfs_fops);
+@@ -3153,27 +4025,92 @@
+  * It is assumed here that IRQ safe runtime PM is chosen in probe and amba
+  * bus driver will only disable/enable the clock in runtime PM callbacks.
+  */
++static bool pl330_controller_drained(struct pl330_dmac *pl330);
++static int pl330_controller_stop_proof(struct pl330_dmac *pl330);
++
+ static int __maybe_unused pl330_suspend(struct device *dev)
+ {
+-	struct amba_device *pcdev = to_amba_device(dev);
+-
+-	pm_runtime_force_suspend(dev);
+-	amba_pclk_unprepare(pcdev);
+-
+-	return 0;
+-}
+-
+-static int __maybe_unused pl330_resume(struct device *dev)
+-{
+-	struct amba_device *pcdev = to_amba_device(dev);
++	struct amba_device *adev = to_amba_device(dev);
++	struct pl330_dmac *pl330 = amba_get_drvdata(adev);
++	struct dma_pl330_chan *pch;
++	unsigned long flags;
+ 	int ret;
+ 
+-	ret = amba_pclk_prepare(pcdev);
++	/* This BSP stage supports system sleep only after all DMA clients release. */
++	spin_lock_irqsave(&pl330->lock, flags);
++	ret = pl330->lifecycle_error;
++	if (!ret)
++		pl330->system_suspended = true;
++	spin_unlock_irqrestore(&pl330->lock, flags);
+ 	if (ret)
+ 		return ret;
+-
+-	pm_runtime_force_resume(dev);
+-
++	list_for_each_entry(pch, &pl330->ddma.channels, chan.device_node) {
++		spin_lock_irqsave(&pch->lock, flags);
++		if (pch->thread || atomic_read(&pch->prepared_descs) ||
++		    !pl330_software_drained_locked(pch))
++			ret = -EBUSY;
++		spin_unlock_irqrestore(&pch->lock, flags);
++		if (ret)
++			goto busy;
++	}
++	ret = pm_runtime_get_sync(dev);
++	if (ret < 0) {
++		pm_runtime_put_noidle(dev);
++		goto fault;
++	}
++	if (!wait_event_timeout(pl330->drain_wait, pl330_controller_drained(pl330),
++				msecs_to_jiffies(500)))
++		pl330_failstop(pl330, "suspend controller software deadline");
++	ret = pl330_controller_stop_proof(pl330);
++	if (ret)
++		goto fault;
++	ret = pm_runtime_force_suspend(dev);
++	if (ret)
++		goto fault;
++	pm_runtime_put_noidle(dev);
++	amba_pclk_unprepare(adev);
++	return 0;
++busy:
++	spin_lock_irqsave(&pl330->lock, flags);
++	pl330->system_suspended = false;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	return ret;
++fault:
++	spin_lock_irqsave(&pl330->lock, flags);
++	pl330_pm_error_locked(pl330, ret);
++	ret = pl330->lifecycle_error;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	/* On an unknown power/stop outcome preserve the acquired PM reference. */
++	return ret;
++}
++
++static int __maybe_unused pl330_resume(struct device *dev)
++{
++	struct amba_device *adev = to_amba_device(dev);
++	struct pl330_dmac *pl330 = amba_get_drvdata(adev);
++	unsigned long flags;
++	int ret;
++
++	ret = READ_ONCE(pl330->lifecycle_error);
++	if (ret)
++		return ret;
++	ret = amba_pclk_prepare(adev);
++	if (ret)
++		return ret;
++	ret = pm_runtime_force_resume(dev);
++	if (ret) {
++		amba_pclk_unprepare(adev);
++		spin_lock_irqsave(&pl330->lock, flags);
++		pl330_pm_error_locked(pl330, ret);
++		ret = pl330->lifecycle_error;
++		spin_unlock_irqrestore(&pl330->lock, flags);
++		return ret;
++	}
++	spin_lock_irqsave(&pl330->lock, flags);
++	ret = pl330->lifecycle_error;
++	if (!ret)
++		pl330->system_suspended = false;
++	spin_unlock_irqrestore(&pl330->lock, flags);
+ 	return ret;
+ }
+ 
+@@ -3181,12 +4118,124 @@
+ 	SET_LATE_SYSTEM_SLEEP_PM_OPS(pl330_suspend, pl330_resume)
+ };
+ 
++/* Cached proof only: reading this attribute never powers or reads the DMAC. */
++static ssize_t rk3568_lifecycle_state_show(struct device *dev,
++			struct device_attribute *attr, char *buf)
++{
++	struct pl330_dmac *pl330 = dev_get_drvdata(dev);
++	struct dma_pl330_chan *pch;
++	unsigned long flags;
++	unsigned int allocated = 0, leases = 0, software = 0, queued = 0;
++	int error, usage, descriptors;
++	u64 reads;
++	bool stopped, ready;
++
++	if (!spin_trylock_irqsave(&pl330->lock, flags))
++		return -EAGAIN;
++	list_for_each_entry(pch, &pl330->ddma.channels, chan.device_node) {
++		allocated += READ_ONCE(pch->thread) != NULL;
++		leases += READ_ONCE(pch->pm_ref_held);
++		software += atomic_read(&pch->producers) + atomic_read(&pch->runners) +
++			atomic_read(&pch->issuers) + atomic_read(&pch->operations) +
++			atomic_read(&pch->preparations) + atomic_read(&pch->prepared_descs) +
++			atomic_read(&pch->faults) + atomic_read(&pch->gc_users);
++		queued += READ_ONCE(pch->tasklet_queued) + READ_ONCE(pch->gc_queued);
++	}
++	software += atomic_read(&pl330->producers) + atomic_read(&pl330->irq_users);
++	queued += pl330->fault_tasklet_queued;
++	error = pl330->lifecycle_error;
++	usage = atomic_read(&dev->power.usage_count);
++	descriptors = atomic_read(&pl330->owned_descs);
++	stopped = pl330->stop_proven;
++	reads = pl330->stop_reads;
++	ready = pl330->ddma.device_synchronize_checked == pl330_synchronize_checked &&
++		!error && !pl330->removing && !pl330->system_suspended &&
++		stopped && reads && !usage && !leases && !software && !queued && !descriptors;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	return scnprintf(buf, PAGE_SIZE,
++		"version=1 ready=%u error=%d stop_proven=%u stop_reads=%llu "
++		"pm_usage=%d leases=%u software=%u queued=%u descriptors=%d allocated=%u\n",
++		ready, error, stopped, (unsigned long long)reads, usage, leases,
++		software, queued, descriptors, allocated);
++}
++static DEVICE_ATTR_RO(rk3568_lifecycle_state);
++
++static void pl330_reader_deadline(struct timer_list *timer)
++{
++	struct pl330_dmac *pl330 = from_timer(pl330, timer, reader_timer);
++
++	pl330_failstop(pl330, "sysfs or IRQ publication drain deadline");
++}
++
++static void pl330_reader_remove(struct pl330_dmac *pl330)
++{
++	/* kernfs drains active readers; bound that wait before devres can free us. */
++	mod_timer(&pl330->reader_timer, jiffies + msecs_to_jiffies(500));
++	device_remove_file(pl330->ddma.dev, &dev_attr_rk3568_lifecycle_state);
++	del_timer_sync(&pl330->reader_timer);
++}
++
++/* Admission is already closed; the owner remains alive through free_irq's join. */
++static void pl330_irqs_remove(struct pl330_dmac *pl330)
++{
++	struct amba_device *adev = to_amba_device(pl330->ddma.dev);
++
++	mod_timer(&pl330->reader_timer, jiffies + msecs_to_jiffies(500));
++	while (pl330->irqs_registered) {
++		unsigned int index = --pl330->irqs_registered;
++
++		devm_free_irq(&adev->dev, adev->irq[index], pl330);
++	}
++	del_timer_sync(&pl330->reader_timer);
++}
++
++/* Probe still owns its successful temporary PM lease and AMBA's original lease. */
++static void pl330_probe_cleanup(struct pl330_dmac *pl330, bool registered)
++{
++	struct dma_pl330_chan *pch, *next;
++	unsigned long flags;
++	int i;
++
++	pl330_reader_remove(pl330);
++	if (registered && dmaengine_device_quiesce(&pl330->ddma))
++		pl330_failstop(pl330, "failed probe has a live published client");
++	spin_lock_irqsave(&pl330->lock, flags);
++	pl330->irq_ready = false;
++	pl330->removing = true;
++	pl330->state = DYING;
++	for (i = 0; i < pl330->pcfg.num_chan; i++)
++		pl330->channels[i].accept_callbacks = false;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	list_for_each_entry(pch, &pl330->ddma.channels, chan.device_node) {
++		if (pch->thread)
++			pl330_free_chan_resources(&pch->chan);
++		else if (atomic_read(&pch->prepared_descs) || !pl330_software_drained(pch))
++			pl330_failstop(pl330, "failed probe has a software descriptor owner");
++	}
++	pl330_irqs_remove(pl330);
++	if (!wait_event_timeout(pl330->drain_wait, pl330_controller_drained(pl330),
++				msecs_to_jiffies(500)))
++		pl330_failstop(pl330, "failed probe controller software deadline");
++	if (pl330_controller_stop_proof(pl330))
++		pl330_failstop(pl330, "failed probe manager or channel stop proof");
++	tasklet_kill(&pl330->tasks);
++	if (registered) {
++		mod_timer(&pl330->reader_timer, jiffies + msecs_to_jiffies(500));
++		dma_async_device_unregister(&pl330->ddma);
++		del_timer_sync(&pl330->reader_timer);
++	}
++	list_for_each_entry_safe(pch, next, &pl330->ddma.channels, chan.device_node)
++		list_del(&pch->chan.device_node);
++	pl330_del(pl330);
++}
++
+ static int
+ pl330_probe(struct amba_device *adev, const struct amba_id *id)
+ {
+ 	struct pl330_config *pcfg;
+ 	struct pl330_dmac *pl330;
+-	struct dma_pl330_chan *pch, *_p;
++	struct dma_pl330_chan *pch;
++	unsigned long flags;
+ 	struct dma_device *pd;
+ 	struct resource *res;
+ 	int i, ret, irq;
+@@ -3203,6 +4252,17 @@
+ 	if (!pl330)
+ 		return -ENOMEM;
+ 
++	atomic_set(&pl330->producers, 0);
++	atomic_set(&pl330->owned_descs, 0);
++	timer_setup(&pl330->reader_timer, pl330_reader_deadline, 0);
++	init_waitqueue_head(&pl330->drain_wait);
++	atomic_set(&pl330->irq_users, 0);
++	spin_lock_init(&pl330->lock);
++	INIT_LIST_HEAD(&pl330->req_done);
++	INIT_LIST_HEAD(&pl330->desc_pool);
++	INIT_LIST_HEAD(&pl330->desc_blocks);
++	spin_lock_init(&pl330->pool_lock);
++	INIT_LIST_HEAD(&pl330->ddma.channels);
+ 	pd = &pl330->ddma;
+ 	pd->dev = &adev->dev;
+ 
+@@ -3238,27 +4298,23 @@
+ 
+ 	pl330->rstc_ocp = devm_reset_control_get_optional(&adev->dev, "dma-ocp");
+ 	if (IS_ERR(pl330->rstc_ocp)) {
+-		return dev_err_probe(&adev->dev, PTR_ERR(pl330->rstc_ocp),
+-				     "Failed to get OCP reset!\n");
++		ret = dev_err_probe(&adev->dev, PTR_ERR(pl330->rstc_ocp),
++				    "Failed to get OCP reset!\n");
++		pl330->rstc_ocp = NULL;
++		goto probe_err_reset;
+ 	} else {
+ 		ret = reset_control_deassert(pl330->rstc_ocp);
+ 		if (ret) {
+ 			dev_err(&adev->dev, "Couldn't deassert the device from OCP reset!\n");
+-			return ret;
++			goto probe_err_reset;
+ 		}
+ 	}
+ 
+-	for (i = 0; i < AMBA_NR_IRQS; i++) {
+-		irq = adev->irq[i];
+-		if (irq) {
+-			ret = devm_request_irq(&adev->dev, irq,
+-					       pl330_irq_handler, 0,
+-					       dev_name(&adev->dev), pl330);
+-			if (ret)
+-				return ret;
+-		} else {
+-			break;
+-		}
++	/* Own a successful local lease before the first controller MMIO. */
++	ret = pm_runtime_get_sync(&adev->dev);
++	if (ret < 0) {
++		pm_runtime_put_noidle(&adev->dev);
++		goto probe_err_reset;
+ 	}
+ 
+ 	pcfg = &pl330->pcfg;
+@@ -3266,17 +4322,12 @@
+ 	pcfg->periph_id = adev->periphid;
+ 	ret = pl330_add(pl330);
+ 	if (ret)
+-		return ret;
+-
+-	INIT_LIST_HEAD(&pl330->desc_pool);
+-	spin_lock_init(&pl330->pool_lock);
++		goto probe_err_pm;
+ 
+ 	/* Create a descriptor pool of default size */
+-	if (!add_desc(&pl330->desc_pool, &pl330->pool_lock,
++	if (!add_desc(pl330, &pl330->desc_pool, &pl330->pool_lock,
+ 		      GFP_KERNEL, NR_DEFAULT_DESC))
+ 		dev_warn(&adev->dev, "unable to allocate desc\n");
+-
+-	INIT_LIST_HEAD(&pd->channels);
+ 
+ 	/* Initialize channel parameters */
+ 	num_chan = max_t(int, pcfg->num_peri, pcfg->num_chan);
+@@ -3286,7 +4337,7 @@
+ 	pl330->peripherals = kcalloc(num_chan, sizeof(*pch), GFP_KERNEL);
+ 	if (!pl330->peripherals) {
+ 		ret = -ENOMEM;
+-		goto probe_err2;
++		goto probe_err3;
+ 	}
+ 
+ 	for (i = 0; i < num_chan; i++) {
+@@ -3296,6 +4347,18 @@
+ 		INIT_LIST_HEAD(&pch->submitted_list);
+ 		INIT_LIST_HEAD(&pch->work_list);
+ 		INIT_LIST_HEAD(&pch->completed_list);
++		INIT_LIST_HEAD(&pch->retired_list);
++		atomic_set(&pch->producers, 0);
++		atomic_set(&pch->runners, 0);
++		atomic_set(&pch->preparations, 0);
++		atomic_set(&pch->prepared_descs, 0);
++		atomic_set(&pch->faults, 0);
++		atomic_set(&pch->issuers, 0);
++		atomic_set(&pch->operations, 0);
++		atomic_set(&pch->gc_users, 0);
++		INIT_WORK(&pch->gc_work, pl330_gc_work);
++		init_waitqueue_head(&pch->drain_wait);
++		mutex_init(&pch->sync_mutex);
+ 		spin_lock_init(&pch->lock);
+ 		pch->thread = NULL;
+ 		pch->chan.device = pd;
+@@ -3322,6 +4385,8 @@
+ 	pd->device_config = pl330_config;
+ 	pd->device_pause = pl330_pause;
+ 	pd->device_terminate_all = pl330_terminate_all;
++	pd->device_synchronize = pl330_synchronize;
++	pd->device_check_open = pl330_check_open;
+ 	pd->device_issue_pending = pl330_issue_pending;
+ 	pd->src_addr_widths = PL330_DMA_BUSWIDTHS;
+ 	pd->dst_addr_widths = PL330_DMA_BUSWIDTHS;
+@@ -3329,7 +4394,38 @@
+ 	pd->residue_granularity = DMA_RESIDUE_GRANULARITY_BURST;
+ 	pd->max_burst = PL330_MAX_BURST;
+ 
+-	ret = dma_async_device_register(pd);
++	ret = dma_set_max_seg_size(&adev->dev, 1900800);
++	if (ret)
++		goto probe_err3;
++	/* Mask/clear pending level events and prove every hardware thread first. */
++	if (pl330_controller_stop_proof(pl330))
++		pl330_failstop(pl330, "initial probe manager or channel stop proof");
++	spin_lock_irqsave(&pl330->lock, flags);
++	pl330->irq_ready = true;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	for (i = 0; i < AMBA_NR_IRQS; i++) {
++		irq = adev->irq[i];
++		if (irq) {
++			ret = devm_request_irq(&adev->dev, irq,
++					       pl330_irq_handler, 0,
++					       dev_name(&adev->dev), pl330);
++			if (ret)
++				goto probe_err3;
++			pl330->irqs_registered++;
++		} else {
++			break;
++		}
++	}
++
++	spin_lock_irqsave(&pl330->lock, flags);
++	ret = pl330->lifecycle_error;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	if (ret)
++		pl330_failstop(pl330, "pending probe IRQ fault before DMA publication");
++	ret = device_create_file(&adev->dev, &dev_attr_rk3568_lifecycle_state);
++	if (ret)
++		goto probe_err3;
++	ret = dma_async_device_register_checked(pd, pl330_synchronize_checked);
+ 	if (ret) {
+ 		dev_err(&adev->dev, "unable to register DMAC\n");
+ 		goto probe_err3;
+@@ -3341,16 +4437,9 @@
+ 		if (ret) {
+ 			dev_err(&adev->dev,
+ 			"unable to register DMA to the generic DT DMA helpers\n");
++			goto probe_err_registered;
+ 		}
+ 	}
+-
+-	/*
+-	 * This is the limit for transfers with a buswidth of 1, larger
+-	 * buswidths will have larger limits.
+-	 */
+-	ret = dma_set_max_seg_size(&adev->dev, 1900800);
+-	if (ret)
+-		dev_err(&adev->dev, "unable to set the seg size\n");
+ 
+ 
+ 	init_pl330_debugfs(pl330);
+@@ -3364,73 +4453,130 @@
+ 	pm_runtime_irq_safe(&adev->dev);
+ 	pm_runtime_use_autosuspend(&adev->dev);
+ 	pm_runtime_set_autosuspend_delay(&adev->dev, PL330_AUTOSUSPEND_DELAY);
++	pm_runtime_put_noidle(&adev->dev); /* local probe lease */
+ 	pm_runtime_mark_last_busy(&adev->dev);
+-	pm_runtime_put_autosuspend(&adev->dev);
++	pm_runtime_put_autosuspend(&adev->dev); /* AMBA probe lease */
+ 
+ 	return 0;
++probe_err_registered:
++	pl330_probe_cleanup(pl330, true);
++	goto probe_err_pm;
+ probe_err3:
+-	/* Idle the DMAC */
+-	list_for_each_entry_safe(pch, _p, &pl330->ddma.channels,
+-			chan.device_node) {
+-
+-		/* Remove the channel */
+-		list_del(&pch->chan.device_node);
+-
+-		/* Flush the channel */
+-		if (pch->thread) {
+-			pl330_terminate_all(&pch->chan);
+-			pl330_free_chan_resources(&pch->chan);
+-		}
+-	}
+-probe_err2:
+-	pl330_del(pl330);
+-
++	pl330_probe_cleanup(pl330, false);
++probe_err_pm:
++	pm_runtime_put_noidle(&adev->dev);
++probe_err_reset:
+ 	if (pl330->rstc_ocp)
+ 		reset_control_assert(pl330->rstc_ocp);
+-
+ 	if (pl330->rstc)
+ 		reset_control_assert(pl330->rstc);
+ 	return ret;
+ }
+ 
++/* Global cutoff is used only for final removal or no-client system sleep. */
++static bool pl330_controller_drained(struct pl330_dmac *pl330)
++{
++	unsigned long flags;
++	bool drained;
++
++	spin_lock_irqsave(&pl330->lock, flags);
++	drained = !atomic_read(&pl330->producers) &&
++		!atomic_read(&pl330->irq_users) && !pl330->fault_tasklet_queued;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	return drained;
++}
++
++/* Caller holds a successful temporary PM lease; every admission is closed. */
++static int pl330_controller_stop_proof(struct pl330_dmac *pl330)
++{
++	unsigned long flags;
++	struct pl330_thread *thread;
++	int i, ret;
++
++	spin_lock_irqsave(&pl330->lock, flags);
++	pl330->stop_proven = false;
++	ret = pl330->lifecycle_error;
++	if (ret)
++		goto out;
++	if ((readl(pl330->base + FSM) & 1) ||
++	    (readl(pl330->base + FSC) & ((1U << pl330->pcfg.num_chan) - 1))) {
++		pl330_error_locked(pl330, -EIO);
++		ret = pl330->lifecycle_error;
++		goto out;
++	}
++	writel(0, pl330->base + INTEN);
++	writel(pl330->pcfg.num_events == 32 ? ~0U :
++		(1U << pl330->pcfg.num_events) - 1, pl330->base + INTCLR);
++	/* Manager included: channel-only proof cannot authorize freeing its mcode. */
++	for (i = 0; i <= pl330->pcfg.num_chan; i++) {
++		thread = i == pl330->pcfg.num_chan ? pl330->manager : &pl330->channels[i];
++		if (_state(thread) != PL330_STATE_STOPPED) {
++			ret = _stop(thread);
++			if (!ret)
++				ret = pl330_wait_state(thread, PL330_STATE_STOPPED, 20);
++			if (ret)
++				goto out;
++		}
++	}
++	pl330_capture_stop_locked(pl330);
++out:
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	return ret;
++}
++
+ static void pl330_remove(struct amba_device *adev)
+ {
+ 	struct pl330_dmac *pl330 = amba_get_drvdata(adev);
+-	struct dma_pl330_chan *pch, *_p;
+-	int i, irq;
+-
+-	pm_runtime_get_noresume(pl330->ddma.dev);
+-
++	struct dma_pl330_chan *pch, *next;
++	unsigned long flags;
++	int i, ret;
++
++	/* sysfs deactivation drains active readers before any owner can be freed. */
++	pl330_reader_remove(pl330);
++	/* Same core mutex as every client acquisition: no zero-snapshot race. */
++	if (dmaengine_device_quiesce(&pl330->ddma))
++		pl330_failstop(pl330, "remove has a live core client owner");
++	ret = pm_runtime_get_sync(pl330->ddma.dev);
++	if (ret < 0) {
++		spin_lock_irqsave(&pl330->lock, flags);
++		pl330_pm_error_locked(pl330, ret);
++		spin_unlock_irqrestore(&pl330->lock, flags);
++		pm_runtime_put_noidle(pl330->ddma.dev);
++		pl330_failstop(pl330, "remove cannot power hardware for stop proof");
++	}
++	spin_lock_irqsave(&pl330->lock, flags);
++	pl330->irq_ready = false;
++	pl330->removing = true;
++	pl330->state = DYING;
++	for (i = 0; i < pl330->pcfg.num_chan; i++)
++		pl330->channels[i].accept_callbacks = false;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	list_for_each_entry(pch, &pl330->ddma.channels, chan.device_node) {
++		if (pch->thread)
++			pl330_free_chan_resources(&pch->chan);
++		else if (atomic_read(&pch->prepared_descs) || !pl330_software_drained(pch))
++			pl330_failstop(pl330, "remove has software owner without physical channel");
++	}
++	if (!wait_event_timeout(pl330->drain_wait, pl330_controller_drained(pl330),
++				msecs_to_jiffies(500)))
++		pl330_failstop(pl330, "remove controller software deadline");
++	if (pl330_controller_stop_proof(pl330))
++		pl330_failstop(pl330, "remove manager or channel stop proof");
++	/* Join API wrappers only after their counted work has met the deadline. */
++	pl330_irqs_remove(pl330);
++	tasklet_kill(&pl330->tasks);
+ 	if (adev->dev.of_node)
+ 		of_dma_controller_free(adev->dev.of_node);
+-
+-	for (i = 0; i < AMBA_NR_IRQS; i++) {
+-		irq = adev->irq[i];
+-		if (irq)
+-			devm_free_irq(&adev->dev, irq, pl330);
+-	}
+-
++	mod_timer(&pl330->reader_timer, jiffies + msecs_to_jiffies(500));
+ 	dma_async_device_unregister(&pl330->ddma);
+-
+-	/* Idle the DMAC */
+-	list_for_each_entry_safe(pch, _p, &pl330->ddma.channels,
+-			chan.device_node) {
+-
+-		/* Remove the channel */
++	del_timer_sync(&pl330->reader_timer);
++	list_for_each_entry_safe(pch, next, &pl330->ddma.channels, chan.device_node)
+ 		list_del(&pch->chan.device_node);
+-
+-		/* Flush the channel */
+-		if (pch->thread) {
+-			pl330_terminate_all(&pch->chan);
+-			pl330_free_chan_resources(&pch->chan);
+-		}
+-	}
+-
+ 	pl330_del(pl330);
+-
++	/* Successful proof allows release of the final temporary controller lease. */
++	pm_runtime_put_noidle(pl330->ddma.dev);
+ 	if (pl330->rstc_ocp)
+ 		reset_control_assert(pl330->rstc_ocp);
+-
+ 	if (pl330->rstc)
+ 		reset_control_assert(pl330->rstc);
+ }
+diff --git a/include/linux/dmaengine.h b/include/linux/dmaengine.h
+--- a/include/linux/dmaengine.h
++++ b/include/linux/dmaengine.h
+@@ -935,6 +935,12 @@
+ 	int (*device_resume)(struct dma_chan *chan);
+ 	int (*device_terminate_all)(struct dma_chan *chan);
+ 	void (*device_synchronize)(struct dma_chan *chan);
++	/* BSP optional: negative means software drained but allocation must be retained. */
++	int (*device_synchronize_checked)(struct dma_chan *chan);
++	/* Cached read-only open admission required by checked providers. */
++	int (*device_check_open)(struct dma_chan *chan);
++	/* BSP terminal provider removal gate; protected by DMA core mutex. */
++	bool lifecycle_closing;
+ 
+ 	enum dma_status (*device_tx_status)(struct dma_chan *chan,
+ 					    dma_cookie_t cookie,
+@@ -1161,6 +1167,27 @@
+ 		chan->device->device_synchronize(chan);
+ }
+ 
++/* BSP checked providers must fail-stop rather than return with live callbacks. */
++/* Ordinary providers retain their original open contract. */
++static inline int dmaengine_check_open(struct dma_chan *chan)
++{
++	if (!chan->device->device_synchronize_checked)
++		return 0;
++	if (!chan->device->device_check_open)
++		return -EOPNOTSUPP;
++	return chan->device->device_check_open(chan);
++}
++
++static inline int dmaengine_synchronize_checked(struct dma_chan *chan)
++{
++	might_sleep();
++	if (chan->device->device_synchronize_checked)
++		return chan->device->device_synchronize_checked(chan);
++	/* Other providers retain their existing void synchronization contract. */
++	dmaengine_synchronize(chan);
++	return 0;
++}
++
+ /**
+  * dmaengine_terminate_sync() - Terminate all active DMA transfers
+  * @chan: The channel for which to terminate the transfers
+@@ -1574,6 +1601,10 @@
+ /* --- DMA device --- */
+ 
+ int dma_async_device_register(struct dma_device *device);
++int dma_async_device_register_checked(struct dma_device *device,
++		int (*checked)(struct dma_chan *chan));
++/* Terminal provider remove admission; no successful re-registration before unregister. */
++int dmaengine_device_quiesce(struct dma_device *device);
+ int dmaenginem_async_device_register(struct dma_device *device);
+ void dma_async_device_unregister(struct dma_device *device);
+ int dma_async_device_channel_register(struct dma_device *device,
+diff --git a/drivers/dma/dmaengine.c b/drivers/dma/dmaengine.c
+--- a/drivers/dma/dmaengine.c
++++ b/drivers/dma/dmaengine.c
+@@ -443,10 +443,35 @@
+  *
+  * Must be called under dma_list_mutex.
+  */
++/* Provider remove only: success closes all future core client acquisitions. */
++int dmaengine_device_quiesce(struct dma_device *device)
++{
++	struct dma_chan *chan;
++	int ret = 0;
++
++	mutex_lock(&dma_list_mutex);
++	list_for_each_entry(chan, &device->channels, device_node) {
++		if (chan->client_count) {
++			ret = -EBUSY;
++			break;
++		}
++	}
++	if (!ret)
++		device->lifecycle_closing = true;
++	mutex_unlock(&dma_list_mutex);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(dmaengine_device_quiesce);
++
+ static int dma_chan_get(struct dma_chan *chan)
+ {
+ 	struct module *owner = dma_chan_to_owner(chan);
+ 	int ret;
++
++	lockdep_assert_held(&dma_list_mutex);
++	/* ESHUTDOWN avoids the ENODEV/module-removal list deletion path. */
++	if (chan->device->lifecycle_closing)
++		return -ESHUTDOWN;
+ 
+ 	/* The channel is already in use, update client count */
+ 	if (chan->client_count) {
+@@ -1137,13 +1162,18 @@
+  * device_release() callback which will be called after
+  * dma_async_device_unregister() is called and no further references are taken.
+  */
+-int dma_async_device_register(struct dma_device *device)
++static int __dma_async_device_register(struct dma_device *device,
++		int (*checked)(struct dma_chan *chan))
+ {
+ 	int rc;
+ 	struct dma_chan* chan;
+ 
+ 	if (!device)
+ 		return -ENODEV;
++
++	/* Initialize new fields for every provider, including nonzero allocations. */
++	device->lifecycle_closing = false;
++	device->device_synchronize_checked = checked;
+ 
+ 	/* validate device routines */
+ 	if (!device->dev) {
+@@ -1299,6 +1329,20 @@
+ 	}
+ 	return rc;
+ }
++
++int dma_async_device_register(struct dma_device *device)
++{
++	return __dma_async_device_register(device, NULL);
++}
++
++int dma_async_device_register_checked(struct dma_device *device,
++		int (*checked)(struct dma_chan *chan))
++{
++	if (!checked)
++		return -EINVAL;
++	return __dma_async_device_register(device, checked);
++}
++EXPORT_SYMBOL_GPL(dma_async_device_register_checked);
+ EXPORT_SYMBOL(dma_async_device_register);
+ 
+ /**
+diff --git a/sound/core/pcm_memory.c b/sound/core/pcm_memory.c
+--- a/sound/core/pcm_memory.c
++++ b/sound/core/pcm_memory.c
+@@ -8,7 +8,10 @@
+ #include <linux/time.h>
+ #include <linux/init.h>
+ #include <linux/slab.h>
++#include <linux/device.h>
++#include <linux/atomic.h>
+ #include <linux/moduleparam.h>
++#include <linux/module.h>
+ #include <linux/vmalloc.h>
+ #include <linux/export.h>
+ #include <sound/core.h>
+@@ -48,6 +51,105 @@
+ 	}
+ 	return err;
+ }
++
++/* Permanent owners never retain a runtime, substream, PCM or card pointer. */
++struct snd_pcm_dma_quarantine {
++	struct list_head node;
++	struct snd_dma_buffer saved;
++	struct snd_dma_buffer *buffer;
++	struct device *device;
++	bool consumed;
++};
++
++static LIST_HEAD(pcm_dma_quarantine);
++static DEFINE_MUTEX(pcm_dma_quarantine_lock);
++static atomic_long_t pcm_dma_quarantine_bytes = ATOMIC_LONG_INIT(0);
++
++struct snd_pcm_dma_quarantine *snd_pcm_dma_quarantine_alloc(void)
++{
++	struct snd_pcm_dma_quarantine *token;
++
++	token = kzalloc(sizeof(*token), GFP_KERNEL);
++	if (token)
++		INIT_LIST_HEAD(&token->node);
++	return token;
++}
++EXPORT_SYMBOL_GPL(snd_pcm_dma_quarantine_alloc);
++
++void snd_pcm_dma_quarantine_free(struct snd_pcm_dma_quarantine *token)
++{
++	/* A consumed token and its allocation remain core-owned until power cycle. */
++	if (token && !token->consumed)
++		kfree(token);
++}
++EXPORT_SYMBOL_GPL(snd_pcm_dma_quarantine_free);
++
++size_t snd_pcm_dma_quarantine_bytes(void)
++{
++	return atomic_long_read(&pcm_dma_quarantine_bytes);
++}
++EXPORT_SYMBOL_GPL(snd_pcm_dma_quarantine_bytes);
++
++int snd_pcm_dma_quarantine_check(struct snd_pcm_substream *substream,
++			       struct device *device)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct snd_dma_buffer *buffer;
++
++	if (!runtime || !device)
++		return -EOPNOTSUPP;
++	buffer = runtime->dma_buffer_p;
++	if (!buffer || !buffer->area || !buffer->bytes ||
++	    buffer->dev.type != SNDRV_DMA_TYPE_DEV || buffer->private_data ||
++	    buffer->dev.dev != device || device_iommu_mapped(device) ||
++	    runtime->dma_area != buffer->area || runtime->dma_addr != buffer->addr ||
++	    !runtime->dma_bytes || runtime->dma_bytes > buffer->bytes)
++		return -EOPNOTSUPP;
++	return 0;
++}
++EXPORT_SYMBOL_GPL(snd_pcm_dma_quarantine_check);
++
++int snd_pcm_dma_quarantine(struct snd_pcm_substream *substream,
++			   struct snd_pcm_dma_quarantine *token, struct device *device)
++{
++	struct snd_dma_buffer *buffer;
++	struct snd_card *card = substream->pcm->card;
++
++	if (!token || token->consumed)
++		return -EINVAL;
++	if (snd_pcm_dma_quarantine_check(substream, device))
++		return -EOPNOTSUPP;
++	buffer = substream->runtime->dma_buffer_p;
++	mutex_lock(&card->memory_mutex);
++	/* Refuse ownership transfer before any old owner/accounting mutation. */
++	if (card->total_pcm_alloc_bytes < buffer->bytes) {
++		mutex_unlock(&card->memory_mutex);
++		return -EIO;
++	}
++	/* The permanent list lives in snd-pcm; an unsafe owner forbids module unload. */
++	__module_get(THIS_MODULE);
++	get_device(device);
++	token->device = device;
++	mutex_lock(&pcm_dma_quarantine_lock);
++	if (buffer == &substream->dma_buffer) {
++		token->saved = *buffer;
++		token->buffer = &token->saved;
++		/* The embedded old owner must not free or account this allocation again. */
++		memset(buffer, 0, sizeof(*buffer));
++	} else {
++		/* Dynamic metadata itself transfers; no kfree and no copy dangling owner. */
++		token->buffer = buffer;
++	}
++	card->total_pcm_alloc_bytes -= token->buffer->bytes;
++	atomic_long_add(token->buffer->bytes, &pcm_dma_quarantine_bytes);
++	snd_pcm_set_runtime_buffer(substream, NULL);
++	token->consumed = true;
++	list_add_tail(&token->node, &pcm_dma_quarantine);
++	mutex_unlock(&pcm_dma_quarantine_lock);
++	mutex_unlock(&card->memory_mutex);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(snd_pcm_dma_quarantine);
+ 
+ static void do_free_pages(struct snd_card *card, struct snd_dma_buffer *dmab)
+ {
+@@ -383,9 +485,16 @@
+ 	struct snd_card *card;
+ 	struct snd_pcm_runtime *runtime;
+ 	struct snd_dma_buffer *dmab = NULL;
++	int err;
+ 
+ 	if (PCM_RUNTIME_CHECK(substream))
+ 		return -EINVAL;
++	/* Process context, before resize can release an old exposed allocation. */
++	if (substream->runtime->dma_quiesce) {
++		err = substream->runtime->dma_quiesce(substream);
++		if (err < 0)
++			return err;
++	}
+ 	if (snd_BUG_ON(substream->dma_buffer.dev.type ==
+ 		       SNDRV_DMA_TYPE_UNKNOWN))
+ 		return -EINVAL;
+@@ -435,12 +544,14 @@
+ int snd_pcm_lib_free_pages(struct snd_pcm_substream *substream)
+ {
+ 	struct snd_pcm_runtime *runtime;
++	int err;
+ 
+ 	if (PCM_RUNTIME_CHECK(substream))
+ 		return -EINVAL;
+ 	runtime = substream->runtime;
++	err = runtime->dma_quiesce ? runtime->dma_quiesce(substream) : 0;
+ 	if (runtime->dma_area == NULL)
+-		return 0;
++		return err;
+ 	if (runtime->dma_buffer_p != &substream->dma_buffer) {
+ 		struct snd_card *card = substream->pcm->card;
+ 
+@@ -449,7 +560,7 @@
+ 		kfree(runtime->dma_buffer_p);
+ 	}
+ 	snd_pcm_set_runtime_buffer(substream, NULL);
+-	return 0;
++	return err;
+ }
+ EXPORT_SYMBOL(snd_pcm_lib_free_pages);
+ 
+diff --git a/include/sound/pcm.h b/include/sound/pcm.h
+--- a/include/sound/pcm.h
++++ b/include/sound/pcm.h
+@@ -401,6 +401,8 @@
+ 
+ 	/* -- private section -- */
+ 	void *private_data;
++	/* BSP checked DMA PCM only; allocator guards run in process context. */
++	int (*dma_quiesce)(struct snd_pcm_substream *substream);
+ 	void (*private_free)(struct snd_pcm_runtime *runtime);
+ 
+ 	/* -- hardware description -- */
+@@ -1205,6 +1207,14 @@
+ 					  int type, void *data,
+ 					  size_t size, size_t max);
+ int snd_pcm_lib_malloc_pages(struct snd_pcm_substream *substream, size_t size);
++struct snd_pcm_dma_quarantine;
++struct snd_pcm_dma_quarantine *snd_pcm_dma_quarantine_alloc(void);
++void snd_pcm_dma_quarantine_free(struct snd_pcm_dma_quarantine *token);
++size_t snd_pcm_dma_quarantine_bytes(void);
++int snd_pcm_dma_quarantine_check(struct snd_pcm_substream *substream, struct device *device);
++int snd_pcm_dma_quarantine(struct snd_pcm_substream *substream,
++		struct snd_pcm_dma_quarantine *token, struct device *device);
++
+ int snd_pcm_lib_free_pages(struct snd_pcm_substream *substream);
+ 
+ void snd_pcm_set_managed_buffer(struct snd_pcm_substream *substream, int type,
+diff --git a/sound/core/pcm_dmaengine.c b/sound/core/pcm_dmaengine.c
+--- a/sound/core/pcm_dmaengine.c
++++ b/sound/core/pcm_dmaengine.c
+@@ -13,6 +13,9 @@
+ #include <linux/init.h>
+ #include <linux/dmaengine.h>
+ #include <linux/slab.h>
++#include <linux/mutex.h>
++#include <linux/wait.h>
++#include <linux/kernel.h>
+ #include <sound/pcm.h>
+ #include <sound/pcm_params.h>
+ #include <sound/soc.h>
+@@ -25,6 +28,15 @@
+ 	dma_cookie_t cookie;
+ 
+ 	unsigned int pos;
++	bool checked, exposed, quiescing, closing, go_failed;
++	int first_error;
++	spinlock_t lifecycle_lock;
++	atomic_t operations;
++	wait_queue_head_t drain_wait;
++	struct mutex quiesce_mutex;
++	struct snd_pcm_dma_quarantine *quarantine;
++	struct snd_dma_buffer *owner_buffer;
++	struct snd_dma_buffer owner;
+ };
+ 
+ static inline struct dmaengine_pcm_runtime_data *substream_to_prtd(
+@@ -131,6 +143,109 @@
+ }
+ EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_set_config_from_dai_data);
+ 
++static __noreturn void dmaengine_pcm_failstop(const char *reason)
++{
++	/* Allocation/software ownership cannot be handed back on this path. */
++	panic_timeout = 0;
++	panic("DMA PCM lifecycle fail-stop: %s", reason);
++}
++
++static int dmaengine_pcm_error(struct dmaengine_pcm_runtime_data *prtd, int ret)
++{
++	unsigned long flags;
++
++	if (!prtd->checked)
++		return ret;
++	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++	if (ret < 0 && !prtd->first_error)
++		prtd->first_error = ret;
++	ret = prtd->first_error;
++	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++	return ret;
++}
++
++static int dmaengine_pcm_operation_begin(struct dmaengine_pcm_runtime_data *prtd,
++					int cmd, bool stopping)
++{
++	unsigned long flags;
++	int ret = 0;
++
++	if (!prtd->checked)
++		return 0;
++	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++	if (prtd->closing || prtd->quiescing)
++		ret = prtd->first_error ? prtd->first_error : -EIO;
++	else if (!stopping && (prtd->first_error || prtd->go_failed))
++		ret = prtd->first_error ? prtd->first_error : -EIO;
++	else if (cmd == SNDRV_PCM_TRIGGER_START && prtd->exposed)
++		ret = -EBUSY;
++	if (!ret)
++		atomic_inc(&prtd->operations);
++	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++	return ret;
++}
++
++static void dmaengine_pcm_operation_end(struct dmaengine_pcm_runtime_data *prtd)
++{
++	if (prtd->checked) {
++		atomic_dec(&prtd->operations);
++		wake_up_all(&prtd->drain_wait);
++	}
++}
++
++int snd_dmaengine_pcm_quiesce(struct snd_pcm_substream *substream)
++{
++	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct snd_dma_buffer *buffer;
++	unsigned long flags;
++	int ret, first;
++
++	might_sleep();
++	if (!prtd)
++		return 0;
++	if (!prtd->checked)
++		return dmaengine_synchronize_checked(prtd->dma_chan);
++	mutex_lock(&prtd->quiesce_mutex);
++	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++	prtd->quiescing = true;
++	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++	/* Atomic trigger callbacks never wait or acquire this process mutex. */
++	if (!wait_event_timeout(prtd->drain_wait, !atomic_read(&prtd->operations),
++				msecs_to_jiffies(500)))
++		dmaengine_pcm_failstop("trigger admission drain deadline");
++	/* A checked negative return means all old software callbacks are drained. */
++	ret = dmaengine_synchronize_checked(prtd->dma_chan);
++	first = dmaengine_pcm_error(prtd, ret);
++	if (prtd->exposed) {
++		buffer = runtime->dma_buffer_p;
++		if (buffer != prtd->owner_buffer || !buffer ||
++		    buffer->area != prtd->owner.area || buffer->addr != prtd->owner.addr ||
++		    buffer->bytes != prtd->owner.bytes || buffer->dev.type != prtd->owner.dev.type ||
++		    buffer->dev.dev != prtd->owner.dev.dev ||
++		    buffer->private_data != prtd->owner.private_data ||
++		    snd_pcm_dma_quarantine_check(substream, prtd->dma_chan->device->dev))
++			dmaengine_pcm_failstop("exposed allocation owner changed");
++		if (ret < 0 && snd_pcm_dma_quarantine(substream, prtd->quarantine,
++						     prtd->dma_chan->device->dev))
++			dmaengine_pcm_failstop("allocation ownership transfer failed");
++		prtd->exposed = false;
++		prtd->owner_buffer = NULL;
++		memset(&prtd->owner, 0, sizeof(prtd->owner));
++	}
++	/* Void GO reported only DMA_ERROR; keep a later exact checked errno first. */
++	if (!first && prtd->go_failed)
++		first = dmaengine_pcm_error(prtd, -EIO);
++	prtd->cookie = 0;
++	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++	if (!prtd->closing)
++		prtd->quiescing = false;
++	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++	mutex_unlock(&prtd->quiesce_mutex);
++	return first;
++}
++EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_quiesce);
++
+ static void dmaengine_pcm_dma_complete(void *arg)
+ {
+ 	unsigned int new_pos;
+@@ -160,8 +275,15 @@
+ 	struct dma_chan *chan = prtd->dma_chan;
+ 	struct dma_async_tx_descriptor *desc;
+ 	enum dma_transfer_direction direction;
+-	unsigned long flags = DMA_CTRL_ACK;
+-
++	unsigned long flags = DMA_CTRL_ACK, irqflags;
++	int ret;
++
++	prtd->cookie = 0;
++	if (prtd->checked) {
++		ret = snd_pcm_dma_quarantine_check(substream, chan->device->dev);
++		if (ret)
++			return ret;
++	}
+ 	direction = snd_pcm_substream_to_dma_direction(substream);
+ 
+ 	if (!substream->runtime->no_period_wakeup)
+@@ -179,6 +301,16 @@
+ 	desc->callback = dmaengine_pcm_dma_complete;
+ 	desc->callback_param = substream;
+ 	prtd->cookie = dmaengine_submit(desc);
++	ret = dma_submit_error(prtd->cookie);
++	if (ret)
++		return ret;
++	if (prtd->checked) {
++		spin_lock_irqsave(&prtd->lifecycle_lock, irqflags);
++		prtd->owner_buffer = substream->runtime->dma_buffer_p;
++		prtd->owner = *prtd->owner_buffer;
++		prtd->exposed = true;
++		spin_unlock_irqrestore(&prtd->lifecycle_lock, irqflags);
++	}
+ 
+ 	return 0;
+ }
+@@ -197,37 +329,70 @@
+ {
+ 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+ 	struct snd_pcm_runtime *runtime = substream->runtime;
++	unsigned long flags;
++	bool stopping;
+ 	int ret;
+ 
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		break;
++	default:
++		return -EINVAL;
++	}
++	stopping = cmd == SNDRV_PCM_TRIGGER_STOP ||
++		(cmd == SNDRV_PCM_TRIGGER_SUSPEND && !(runtime->info & SNDRV_PCM_INFO_PAUSE));
++	ret = dmaengine_pcm_operation_begin(prtd, cmd, stopping);
++	if (ret)
++		return ret;
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+ 		ret = dmaengine_pcm_prepare_and_submit(substream);
+ 		if (ret)
+-			return ret;
++			break;
+ 		dma_async_issue_pending(prtd->dma_chan);
++		if (prtd->checked && dmaengine_tx_status(prtd->dma_chan, prtd->cookie, NULL) == DMA_ERROR) {
++			spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++			prtd->go_failed = true;
++			spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++			dmaengine_pcm_operation_end(prtd);
++			return -EIO;
++		}
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+-		dmaengine_resume(prtd->dma_chan);
++		ret = dmaengine_resume(prtd->dma_chan);
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+ 		if (runtime->info & SNDRV_PCM_INFO_PAUSE)
+-			dmaengine_pause(prtd->dma_chan);
++			ret = dmaengine_pause(prtd->dma_chan);
+ 		else
+-			dmaengine_terminate_async(prtd->dma_chan);
++			ret = dmaengine_terminate_async(prtd->dma_chan);
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+-		dmaengine_pause(prtd->dma_chan);
++		ret = dmaengine_pause(prtd->dma_chan);
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_STOP:
+-		dmaengine_terminate_async(prtd->dma_chan);
++		ret = dmaengine_terminate_async(prtd->dma_chan);
+ 		break;
+ 	default:
+-		return -EINVAL;
+-	}
+-
+-	return 0;
+-}
++		ret = -EINVAL;
++		break;
++	}
++	/* Validation/prep NULL has no exact I/O errno; checked obtains it later. */
++	if (cmd == SNDRV_PCM_TRIGGER_START && ret < 0 && prtd->cookie >= 0) {
++		dmaengine_pcm_operation_end(prtd);
++		return ret;
++	}
++	ret = dmaengine_pcm_error(prtd, ret);
++	dmaengine_pcm_operation_end(prtd);
++	return ret;
++}
++
+ EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_trigger);
+ 
+ /**
+@@ -313,6 +478,10 @@
+ 	if (!chan)
+ 		return -ENXIO;
+ 
++	ret = dmaengine_check_open(chan);
++	if (ret < 0)
++		return ret;
++
+ 	ret = snd_pcm_hw_constraint_integer(substream->runtime,
+ 					    SNDRV_PCM_HW_PARAM_PERIODS);
+ 	if (ret < 0)
+@@ -323,8 +492,22 @@
+ 		return -ENOMEM;
+ 
+ 	prtd->dma_chan = chan;
++	prtd->checked = !!chan->device->device_synchronize_checked;
++	spin_lock_init(&prtd->lifecycle_lock);
++	atomic_set(&prtd->operations, 0);
++	init_waitqueue_head(&prtd->drain_wait);
++	mutex_init(&prtd->quiesce_mutex);
++	if (prtd->checked) {
++		prtd->quarantine = snd_pcm_dma_quarantine_alloc();
++		if (!prtd->quarantine) {
++			kfree(prtd);
++			return -ENOMEM;
++		}
++	}
+ 
+ 	substream->runtime->private_data = prtd;
++	if (prtd->checked)
++		substream->runtime->dma_quiesce = snd_dmaengine_pcm_quiesce;
+ 
+ 	return 0;
+ }
+@@ -359,10 +542,23 @@
+ {
+ 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+ 
+-	dmaengine_synchronize(prtd->dma_chan);
++	unsigned long flags;
++	int ret;
++
++	if (!prtd)
++		return 0;
++	if (prtd->checked) {
++		spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++		prtd->closing = true;
++		spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++	}
++	ret = snd_dmaengine_pcm_quiesce(substream);
++	substream->runtime->dma_quiesce = NULL;
++	substream->runtime->private_data = NULL;
++	snd_pcm_dma_quarantine_free(prtd->quarantine);
+ 	kfree(prtd);
+ 
+-	return 0;
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_close);
+ 
+@@ -377,11 +573,26 @@
+ {
+ 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+ 
+-	dmaengine_synchronize(prtd->dma_chan);
++	unsigned long flags;
++	int ret;
++
++	if (!prtd)
++		return 0;
++	if (prtd->checked) {
++		spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++		prtd->closing = true;
++		spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++	}
++	ret = snd_dmaengine_pcm_quiesce(substream);
++	if (prtd->checked && ret < 0)
++		dmaengine_pcm_failstop("channel owner cannot be released");
+ 	dma_release_channel(prtd->dma_chan);
++	substream->runtime->dma_quiesce = NULL;
++	substream->runtime->private_data = NULL;
++	snd_pcm_dma_quarantine_free(prtd->quarantine);
+ 	kfree(prtd);
+ 
+-	return 0;
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_close_release_chan);
+ 
+diff --git a/sound/soc/soc-generic-dmaengine-pcm.c b/sound/soc/soc-generic-dmaengine-pcm.c
+--- a/sound/soc/soc-generic-dmaengine-pcm.c
++++ b/sound/soc/soc-generic-dmaengine-pcm.c
+@@ -174,6 +174,12 @@
+ 	return snd_dmaengine_pcm_close(substream);
+ }
+ 
++static int dmaengine_pcm_quiesce(struct snd_soc_component *component,
++				 struct snd_pcm_substream *substream)
++{
++	return snd_dmaengine_pcm_quiesce(substream);
++}
++
+ static int dmaengine_pcm_trigger(struct snd_soc_component *component,
+ 				 struct snd_pcm_substream *substream, int cmd)
+ {
+@@ -336,6 +342,9 @@
+ 	.open		= dmaengine_pcm_open,
+ 	.close		= dmaengine_pcm_close,
+ 	.hw_params	= dmaengine_pcm_hw_params,
++	.prepare	= dmaengine_pcm_quiesce,
++	.hw_free	= dmaengine_pcm_quiesce,
++	.sync_stop	= dmaengine_pcm_quiesce,
+ 	.trigger	= dmaengine_pcm_trigger,
+ 	.pointer	= dmaengine_pcm_pointer,
+ 	.pcm_construct	= dmaengine_pcm_new,
+@@ -347,6 +356,9 @@
+ 	.open		= dmaengine_pcm_open,
+ 	.close		= dmaengine_pcm_close,
+ 	.hw_params	= dmaengine_pcm_hw_params,
++	.prepare	= dmaengine_pcm_quiesce,
++	.hw_free	= dmaengine_pcm_quiesce,
++	.sync_stop	= dmaengine_pcm_quiesce,
+ 	.trigger	= dmaengine_pcm_trigger,
+ 	.pointer	= dmaengine_pcm_pointer,
+ 	.copy_user	= dmaengine_copy_user,
+diff --git a/include/sound/dmaengine_pcm.h b/include/sound/dmaengine_pcm.h
+--- a/include/sound/dmaengine_pcm.h
++++ b/include/sound/dmaengine_pcm.h
+@@ -34,6 +34,7 @@
+ int snd_dmaengine_pcm_open(struct snd_pcm_substream *substream,
+ 	struct dma_chan *chan);
+ int snd_dmaengine_pcm_close(struct snd_pcm_substream *substream);
++int snd_dmaengine_pcm_quiesce(struct snd_pcm_substream *substream);
+ 
+ int snd_dmaengine_pcm_open_request_chan(struct snd_pcm_substream *substream,
+ 	dma_filter_fn filter_fn, void *filter_data);
+diff --git a/sound/soc/soc-pcm.c b/sound/soc/soc-pcm.c
+--- a/sound/soc/soc-pcm.c
++++ b/sound/soc/soc-pcm.c
+@@ -1063,7 +1063,7 @@
+ 
+ static int soc_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+ {
+-	int ret = -EINVAL;
++	int ret, next;
+ 
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+@@ -1071,31 +1071,34 @@
+ 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+ 		ret = snd_soc_link_trigger(substream, cmd);
+ 		if (ret < 0)
+-			break;
+-
++			goto stop_link;
+ 		ret = snd_soc_pcm_component_trigger(substream, cmd);
+ 		if (ret < 0)
+-			break;
+-
++			goto stop_link;
+ 		ret = snd_soc_pcm_dai_trigger(substream, cmd);
+-		break;
++		if (ret >= 0)
++			return ret;
++		/* The failed group already rolled back only its attempted prefix. */
++		snd_soc_pcm_component_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
++stop_link:
++		snd_soc_link_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
++		return ret;
+ 	case SNDRV_PCM_TRIGGER_STOP:
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+ 		ret = snd_soc_pcm_dai_trigger(substream, cmd);
+-		if (ret < 0)
+-			break;
+-
+-		ret = snd_soc_pcm_component_trigger(substream, cmd);
+-		if (ret < 0)
+-			break;
+-
+-		ret = snd_soc_link_trigger(substream, cmd);
+-		break;
+-	}
+-
+-	return ret;
+-}
++		next = snd_soc_pcm_component_trigger(substream, cmd);
++		if (ret >= 0 && next < 0)
++			ret = next;
++		next = snd_soc_link_trigger(substream, cmd);
++		if (ret >= 0 && next < 0)
++			ret = next;
++		return ret;
++	default:
++		return -EINVAL;
++	}
++}
++
+ 
+ /*
+  * soc level wrapper for pointer callback
+diff --git a/sound/soc/soc-component.c b/sound/soc/soc-component.c
+--- a/sound/soc/soc-component.c
++++ b/sound/soc/soc-component.c
+@@ -816,18 +816,39 @@
+ {
+ 	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+ 	struct snd_soc_component *component;
+-	int i, ret;
++	bool starting = cmd == SNDRV_PCM_TRIGGER_START ||
++		cmd == SNDRV_PCM_TRIGGER_RESUME || cmd == SNDRV_PCM_TRIGGER_PAUSE_RELEASE;
++	bool stopping = cmd == SNDRV_PCM_TRIGGER_STOP ||
++		cmd == SNDRV_PCM_TRIGGER_SUSPEND || cmd == SNDRV_PCM_TRIGGER_PAUSE_PUSH;
++	int i, j, ret, first = 0;
+ 
+ 	for_each_rtd_components(rtd, i, component) {
+-		if (component->driver->trigger) {
+-			ret = component->driver->trigger(component, substream, cmd);
+-			if (ret < 0)
+-				return soc_component_ret(component, ret);
+-		}
+-	}
+-
+-	return 0;
+-}
++		if (!(component->driver->trigger))
++			continue;
++		ret = component->driver->trigger(component, substream, cmd);
++		if (ret >= 0)
++			continue;
++		if (!first)
++			first = soc_component_ret(component, ret);
++		if (starting)
++			goto rollback;
++		if (!stopping)
++			return first;
++	}
++	return first;
++
++rollback:
++	/* The failed member may have partially executed; later members are untouched.
++	 * STOP carries this substream so each callback keeps its own direction owner.
++	 */
++	for (j = i; j >= 0; j--) {
++		component = rtd->components[j];
++		if (component->driver->trigger)
++			component->driver->trigger(component, substream, SNDRV_PCM_TRIGGER_STOP);
++	}
++	return first;
++}
++
+ 
+ int snd_soc_pcm_component_pm_runtime_get(struct snd_soc_pcm_runtime *rtd,
+ 					 void *stream)
+diff --git a/sound/soc/soc-dai.c b/sound/soc/soc-dai.c
+--- a/sound/soc/soc-dai.c
++++ b/sound/soc/soc-dai.c
+@@ -554,23 +554,43 @@
+ }
+ 
+ int snd_soc_pcm_dai_trigger(struct snd_pcm_substream *substream,
+-			    int cmd)
++				  int cmd)
+ {
+ 	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+ 	struct snd_soc_dai *dai;
+-	int i, ret;
++	bool starting = cmd == SNDRV_PCM_TRIGGER_START ||
++		cmd == SNDRV_PCM_TRIGGER_RESUME || cmd == SNDRV_PCM_TRIGGER_PAUSE_RELEASE;
++	bool stopping = cmd == SNDRV_PCM_TRIGGER_STOP ||
++		cmd == SNDRV_PCM_TRIGGER_SUSPEND || cmd == SNDRV_PCM_TRIGGER_PAUSE_PUSH;
++	int i, j, ret, first = 0;
+ 
+ 	for_each_rtd_dais(rtd, i, dai) {
+-		if (dai->driver->ops &&
+-		    dai->driver->ops->trigger) {
+-			ret = dai->driver->ops->trigger(substream, cmd, dai);
+-			if (ret < 0)
+-				return soc_dai_ret(dai, ret);
+-		}
+-	}
+-
+-	return 0;
+-}
++		if (!(dai->driver->ops && dai->driver->ops->trigger))
++			continue;
++		ret = dai->driver->ops->trigger(substream, cmd, dai);
++		if (ret >= 0)
++			continue;
++		if (!first)
++			first = soc_dai_ret(dai, ret);
++		if (starting)
++			goto rollback;
++		if (!stopping)
++			return first;
++	}
++	return first;
++
++rollback:
++	/* The failed member may have partially executed; later members are untouched.
++	 * STOP carries this substream so each callback keeps its own direction owner.
++	 */
++	for (j = i; j >= 0; j--) {
++		dai = rtd->dais[j];
++		if (dai->driver->ops && dai->driver->ops->trigger)
++			dai->driver->ops->trigger(substream, SNDRV_PCM_TRIGGER_STOP, dai);
++	}
++	return first;
++}
++
+ 
+ int snd_soc_pcm_dai_bespoke_trigger(struct snd_pcm_substream *substream,
+ 				    int cmd)
+diff --git a/sound/core/pcm.c b/sound/core/pcm.c
+--- a/sound/core/pcm.c
++++ b/sound/core/pcm.c
+@@ -1224,8 +1224,19 @@
+  *  ENTRY functions
+  */
+ 
++static ssize_t dma_quarantine_bytes_show(struct class *class,
++			struct class_attribute *attr, char *buf)
++{
++	return scnprintf(buf, PAGE_SIZE, "%zu\n", snd_pcm_dma_quarantine_bytes());
++}
++static CLASS_ATTR_RO(dma_quarantine_bytes);
++
+ static int __init alsa_pcm_init(void)
+ {
++	int ret = class_create_file(sound_class, &class_attr_dma_quarantine_bytes);
++
++	if (ret)
++		return ret;
+ 	snd_ctl_register_ioctl(snd_pcm_control_ioctl);
+ 	snd_ctl_register_ioctl_compat(snd_pcm_control_ioctl);
+ 	snd_pcm_proc_init();
+@@ -1234,6 +1245,7 @@
+ 
+ static void __exit alsa_pcm_exit(void)
+ {
++	class_remove_file(sound_class, &class_attr_dma_quarantine_bytes);
+ 	snd_ctl_unregister_ioctl(snd_pcm_control_ioctl);
+ 	snd_ctl_unregister_ioctl_compat(snd_pcm_control_ioctl);
+ 	snd_pcm_proc_done();

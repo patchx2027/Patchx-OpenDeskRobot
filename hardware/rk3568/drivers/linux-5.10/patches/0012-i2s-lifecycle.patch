@@ -1,0 +1,1279 @@
+diff --git a/sound/soc/rockchip/rockchip_i2s_tdm.c b/sound/soc/rockchip/rockchip_i2s_tdm.c
+--- a/sound/soc/rockchip/rockchip_i2s_tdm.c
++++ b/sound/soc/rockchip/rockchip_i2s_tdm.c
+@@ -127,6 +127,23 @@
+ 	int tx_reset_id;
+ 	int rx_reset_id;
+ #endif
++	/* Only the locked RK3568 I2S1 ordinary master path opts in. */
++	bool checked_lifecycle;
++	bool configuring;
++	bool stop_proven;
++	bool irq_live;
++	bool mclks_enabled;
++	bool hclk_enabled;
++	bool pm_enabled; /* one owned pm_runtime_enable, process teardown balances it */
++	bool irq_drained;
++	bool power_transition;
++	bool ready;
++	unsigned int stop_reads;
++	void __iomem *regs;
++	int irq;
++	bool shutting_down;
++	unsigned int started;
++	int runtime_error;
+ 	bool is_master_mode;
+ 	bool io_multiplex;
+ 	bool mclk_calibrate;
+@@ -195,9 +212,249 @@
+ 	return chs;
+ }
+ 
++
++static int i2s_checked_error_locked(struct rk_i2s_tdm_dev *i2s_tdm, int ret);
++static int i2s_checked_stop_locked(struct rk_i2s_tdm_dev *i2s_tdm, int stream, bool force);
++static int i2s_checked_first_error(int first, int next);
++static int rockchip_i2s_tdm_pinctrl_select_clk_state(struct device *dev);
++
++static void i2s_checked_failstop(struct rk_i2s_tdm_dev *i2s_tdm,
++			       const char *operation, int ret)
++{
++	/* Returning from remove does not preserve devres. Never warm reboot. */
++	WRITE_ONCE(panic_timeout, 0);
++	panic("%s: %s unsafe CPU I2S destruction (%d)", DRV_NAME, operation, ret);
++}
++
++static int i2s_checked_runtime_suspend(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++	unsigned long flags;
++	int ret = 0;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (i2s_tdm->runtime_error && !i2s_tdm->shutting_down)
++		ret = i2s_tdm->runtime_error;
++	else if (i2s_tdm->configuring || i2s_tdm->started || !i2s_tdm->stop_proven)
++		ret = -EBUSY;
++	if (!ret) {
++		i2s_tdm->power_transition = true;
++		i2s_tdm->irq_live = false;
++		i2s_tdm->irq_drained = false;
++	}
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	if (ret)
++		return ret;
++	if (i2s_tdm->irq > 0)
++		synchronize_irq(i2s_tdm->irq);
++	regcache_cache_only(i2s_tdm->regmap, true);
++	if (i2s_tdm->mclks_enabled) {
++		clk_disable_unprepare(i2s_tdm->mclk_tx);
++		clk_disable_unprepare(i2s_tdm->mclk_rx);
++		i2s_tdm->mclks_enabled = false;
++	}
++	ret = pinctrl_pm_select_idle_state(i2s_tdm->dev);
++	if (ret) {
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		i2s_checked_error_locked(i2s_tdm, ret);
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	}
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	i2s_tdm->irq_drained = true;
++	i2s_tdm->power_transition = false;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static int i2s_checked_runtime_resume(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++	unsigned long flags;
++	bool stopping, proved;
++	int ret, next;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	stopping = i2s_tdm->shutting_down;
++	ret = i2s_tdm->runtime_error;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	if (ret && !stopping)
++		return ret;
++	/* PM core serializes callbacks; process destruction disables/drains it. */
++	if (i2s_tdm->mclks_enabled)
++		return 0;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	i2s_tdm->power_transition = true;
++	i2s_tdm->irq_drained = false;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	ret = rockchip_i2s_tdm_pinctrl_select_clk_state(i2s_tdm->dev);
++	if (ret)
++		goto error;
++	ret = clk_prepare_enable(i2s_tdm->mclk_tx);
++	if (ret)
++		goto error;
++	ret = clk_prepare_enable(i2s_tdm->mclk_rx);
++	if (ret)
++		goto disable_tx;
++	/* Own both refs before any cache replay can partially touch hardware. */
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	i2s_tdm->mclks_enabled = true;
++	i2s_tdm->stop_proven = false;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	regcache_cache_only(i2s_tdm->regmap, false);
++	/* Destruction only issues forced STOP and never replays cached START. */
++	if (!stopping) {
++		regcache_mark_dirty(i2s_tdm->regmap);
++		ret = regcache_sync(i2s_tdm->regmap);
++		if (ret)
++			goto cache_error;
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		ret = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, true);
++		next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, true);
++		ret = i2s_checked_first_error(ret, next);
++		i2s_tdm->stop_proven = !ret;
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		if (ret)
++			goto cache_error;
++	}
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	/* Teardown may revoke the gate while this callback is acquiring clocks. */
++	i2s_tdm->irq_live = !i2s_tdm->shutting_down;
++	i2s_tdm->power_transition = false;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return 0;
++cache_error:
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	/* Preserve the initiating errno even if subsequent STOP also fails. */
++	i2s_checked_error_locked(i2s_tdm, ret);
++	next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, true);
++	proved = !next;
++	next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, true);
++	proved = proved && !next;
++	i2s_tdm->stop_proven = proved;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	if (proved) {
++		regcache_cache_only(i2s_tdm->regmap, true);
++		clk_disable_unprepare(i2s_tdm->mclk_rx);
++		clk_disable_unprepare(i2s_tdm->mclk_tx);
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		i2s_tdm->mclks_enabled = false;
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	}
++	/* Unproved hardware keeps both refs and MMIO access for process cleanup. */
++	goto latch_error;
++disable_tx:
++	/* RX enable failed before any MMIO/cache replay in this callback. */
++	clk_disable_unprepare(i2s_tdm->mclk_tx);
++error:
++	regcache_cache_only(i2s_tdm->regmap, true);
++latch_error:
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	i2s_tdm->irq_live = false;
++	i2s_tdm->power_transition = false;
++	i2s_checked_error_locked(i2s_tdm, ret);
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static void i2s_checked_pm_disable(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++	unsigned long flags;
++	bool owned;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	owned = i2s_tdm->pm_enabled;
++	i2s_tdm->pm_enabled = false;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	/* One disable balances our one enable. It also drains queued callbacks. */
++	if (owned)
++		pm_runtime_disable(i2s_tdm->dev);
++}
++
++static void i2s_checked_quiesce(struct rk_i2s_tdm_dev *i2s_tdm,
++			      const char *operation)
++{
++	unsigned long flags;
++	int ret, next;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	/* No cross-ALSA ownership exists here; devres cannot destroy open owners. */
++	ret = i2s_tdm->configuring || i2s_tdm->started ||
++		READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK]) ||
++		READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_CAPTURE]) ? -EBUSY : 0;
++	if (!ret) {
++		WRITE_ONCE(i2s_tdm->ready, false);
++		i2s_tdm->shutting_down = true;
++		i2s_tdm->irq_live = false;
++	}
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	if (ret)
++		i2s_checked_failstop(i2s_tdm, operation, ret);
++	if (i2s_tdm->irq > 0)
++		synchronize_irq(i2s_tdm->irq);
++	i2s_checked_pm_disable(i2s_tdm);
++	/* A latched PM-core callback error rejects get_sync with -EINVAL.
++	 * After disable drained the core, our clock refs provide a separate,
++	 * serialized process-only STOP path without a new runtime PM usage lease.
++	 */
++	if (i2s_tdm->hclk_enabled) {
++		ret = i2s_checked_runtime_resume(i2s_tdm);
++		if (ret)
++			i2s_checked_failstop(i2s_tdm, operation, ret);
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		ret = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, true);
++		next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, true);
++		ret = i2s_checked_first_error(ret, next);
++		i2s_tdm->stop_proven = !ret;
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		if (ret)
++			i2s_checked_failstop(i2s_tdm, operation, ret);
++		ret = i2s_checked_runtime_suspend(i2s_tdm);
++		if (ret)
++			i2s_checked_failstop(i2s_tdm, operation, ret);
++		clk_disable_unprepare(i2s_tdm->hclk);
++		i2s_tdm->hclk_enabled = false;
++	}
++	/* This is legal only after actual STOP proof and with core disabled. */
++	ret = pm_runtime_set_suspended(i2s_tdm->dev);
++	if (ret)
++		i2s_checked_failstop(i2s_tdm, operation, ret);
++}
++
++static void i2s_checked_probe_clock_release(void *data)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = data;
++	unsigned long flags;
++	int ret;
++
++	/* IRQ/component devres are gone; all clock consumer handles are still alive. */
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	WRITE_ONCE(i2s_tdm->ready, false);
++	i2s_tdm->shutting_down = true;
++	i2s_tdm->irq_live = false;
++	ret = READ_ONCE(i2s_tdm->substreams[0]) || READ_ONCE(i2s_tdm->substreams[1]) ||
++		i2s_tdm->started || i2s_tdm->configuring ? -EBUSY : 0;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	if (ret)
++		i2s_checked_failstop(i2s_tdm, "probe cleanup", ret);
++	/* PM disable drains pending/running PM callbacks before consumer release. */
++	i2s_checked_pm_disable(i2s_tdm);
++	if (i2s_tdm->mclks_enabled && !i2s_tdm->stop_proven)
++		i2s_checked_failstop(i2s_tdm, "probe cleanup stop unproved", -EIO);
++	if (i2s_tdm->mclks_enabled) {
++		clk_disable_unprepare(i2s_tdm->mclk_tx);
++		clk_disable_unprepare(i2s_tdm->mclk_rx);
++		i2s_tdm->mclks_enabled = false;
++	}
++	if (i2s_tdm->hclk_enabled) {
++		clk_disable_unprepare(i2s_tdm->hclk);
++		i2s_tdm->hclk_enabled = false;
++	}
++}
++
+ static int i2s_tdm_runtime_suspend(struct device *dev)
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++
++	if (i2s_tdm->checked_lifecycle)
++		return i2s_checked_runtime_suspend(i2s_tdm);
+ 
+ 	regcache_cache_only(i2s_tdm->regmap, true);
+ 
+@@ -216,6 +473,8 @@
+ 	if (IS_ERR_OR_NULL(i2s_tdm->pinctrl) || !i2s_tdm->clk_state)
+ 		return 0;
+ 
++	if (i2s_tdm->checked_lifecycle)
++		return pinctrl_select_state(i2s_tdm->pinctrl, i2s_tdm->clk_state);
+ 	pinctrl_select_state(i2s_tdm->pinctrl, i2s_tdm->clk_state);
+ 
+ 	return 0;
+@@ -225,6 +484,9 @@
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
+ 	int ret;
++
++	if (i2s_tdm->checked_lifecycle)
++		return i2s_checked_runtime_resume(i2s_tdm);
+ 
+ 	/*
+ 	 * pinctrl default state is invoked by ASoC framework, so,
+@@ -261,6 +523,205 @@
+ err_mclk_rx:
+ 	clk_disable_unprepare(i2s_tdm->mclk_tx);
+ err_mclk_tx:
++	return ret;
++}
++
++
++/* Protected by lock; never cleared by STOP, HW_FREE, close or PM retry. */
++static int i2s_checked_error_locked(struct rk_i2s_tdm_dev *i2s_tdm, int ret)
++{
++	if (ret < 0 && !i2s_tdm->runtime_error)
++		i2s_tdm->runtime_error = ret;
++	return ret;
++}
++
++static int i2s_checked_gate_locked(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++	if (i2s_tdm->runtime_error)
++		return i2s_tdm->runtime_error;
++	if (i2s_tdm->shutting_down)
++		return -ESHUTDOWN;
++	if (i2s_tdm->configuring || i2s_tdm->power_transition || i2s_tdm->started)
++		return -EBUSY;
++	return 0;
++}
++
++
++static int i2s_checked_first_error(int first, int next)
++{
++	return first ? first : next;
++}
++
++static int i2s_checked_clear_locked(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++	unsigned int clr = I2S_CLR_TXC | I2S_CLR_RXC;
++	unsigned int val;
++	int ret;
++
++	ret = regmap_write_bits(i2s_tdm->regmap, I2S_CLR, clr, clr);
++	if (ret)
++		return ret;
++	ret = regmap_read_poll_timeout_atomic(i2s_tdm->regmap, I2S_CLR, val,
++					      !(val & clr), 10, 100);
++	if (ret != -ETIMEDOUT)
++		return ret;
++	ret = regmap_write_bits(i2s_tdm->regmap, I2S_CLR, clr, clr);
++	if (ret)
++		return ret;
++	/* RK3568 has no mapped sync reset here; no reset can certify clear. */
++	return regmap_read_poll_timeout_atomic(i2s_tdm->regmap, I2S_CLR, val,
++					       !(val & clr), 10, 100);
++}
++
++static int i2s_checked_irq_locked(struct rk_i2s_tdm_dev *i2s_tdm,
++				  int stream, bool en)
++{
++	unsigned int ack, mask, value;
++	int ret, next;
++
++	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		ack = I2S_INTCR_TXUIC;
++		mask = I2S_INTCR_TXUIE_MASK;
++		value = I2S_INTCR_TXUIE(en);
++	} else {
++		ack = I2S_INTCR_RXOIC;
++		mask = I2S_INTCR_RXOIE_MASK;
++		value = I2S_INTCR_RXOIE(en);
++	}
++	if (en) {
++		ret = regmap_write_bits(i2s_tdm->regmap, I2S_INTCR, ack, ack);
++		if (ret)
++			return ret;
++		return regmap_write_bits(i2s_tdm->regmap, I2S_INTCR, mask, value);
++	}
++	/* Disable and acknowledge independently, even after the first failure. */
++	ret = regmap_write_bits(i2s_tdm->regmap, I2S_INTCR, mask, 0);
++	next = regmap_write_bits(i2s_tdm->regmap, I2S_INTCR, ack, ack);
++	return i2s_checked_first_error(ret, next);
++}
++
++static int i2s_checked_dma_locked(struct rk_i2s_tdm_dev *i2s_tdm,
++				  int stream, bool en)
++{
++	unsigned int mask, value;
++	int ret = 0, next;
++
++	if (!en)
++		ret = i2s_checked_irq_locked(i2s_tdm, stream, false);
++	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		mask = I2S_DMACR_TDE_MASK;
++		value = I2S_DMACR_TDE(en);
++	} else {
++		mask = I2S_DMACR_RDE_MASK;
++		value = I2S_DMACR_RDE(en);
++	}
++	next = regmap_write_bits(i2s_tdm->regmap, I2S_DMACR, mask, value);
++	ret = i2s_checked_first_error(ret, next);
++	if (en && !ret) {
++		if (stream == SNDRV_PCM_STREAM_PLAYBACK)
++			udelay(1);
++		ret = i2s_checked_irq_locked(i2s_tdm, stream, true);
++	}
++	return ret;
++}
++
++static int i2s_checked_stop_locked(struct rk_i2s_tdm_dev *i2s_tdm,
++				   int stream, bool force)
++{
++	unsigned int bit = BIT(stream);
++	int ret, next;
++
++	if (!(i2s_tdm->started & bit) && !force)
++		return 0;
++	if (i2s_tdm->started & ~bit)
++		return -EBUSY;
++	ret = i2s_checked_dma_locked(i2s_tdm, stream, false);
++	next = i2s_checked_dma_locked(i2s_tdm, SNDRV_PCM_STREAM_LAST - stream, false);
++	ret = i2s_checked_first_error(ret, next);
++	/* FLAT cache is updated before failed MMIO. Always force the STOP write. */
++	next = regmap_write_bits(i2s_tdm->regmap, I2S_XFER,
++				 I2S_XFER_TXS_MASK | I2S_XFER_RXS_MASK,
++				 I2S_XFER_TXS_STOP | I2S_XFER_RXS_STOP);
++	ret = i2s_checked_first_error(ret, next);
++	udelay(150);
++	next = i2s_checked_clear_locked(i2s_tdm);
++	ret = i2s_checked_first_error(ret, next);
++	if (!ret) {
++		/* Direct MMIO readback bypasses FLAT cache without a global bypass toggle. */
++		i2s_tdm->stop_reads++;
++		if ((readl(i2s_tdm->regs + I2S_XFER) & (I2S_XFER_TXS_MASK | I2S_XFER_RXS_MASK)) ||
++		    (readl(i2s_tdm->regs + I2S_DMACR) & (I2S_DMACR_TDE_MASK | I2S_DMACR_RDE_MASK)) ||
++		    (readl(i2s_tdm->regs + I2S_INTCR) & (I2S_INTCR_TXUIE_MASK | I2S_INTCR_RXOIE_MASK)))
++			ret = -EIO;
++	}
++	if (!ret) {
++		i2s_tdm->started &= ~bit;
++		i2s_tdm->stop_proven = true;
++	} else {
++		i2s_tdm->stop_proven = false;
++	}
++	i2s_checked_error_locked(i2s_tdm, ret);
++	return ret;
++}
++
++static int i2s_checked_start_locked(struct rk_i2s_tdm_dev *i2s_tdm, int stream)
++{
++	unsigned int bit = BIT(stream);
++	int ret;
++
++	if (i2s_tdm->runtime_error)
++		return i2s_tdm->runtime_error;
++	if (i2s_tdm->shutting_down)
++		return -ESHUTDOWN;
++	if (!READ_ONCE(i2s_tdm->ready))
++		return -EAGAIN;
++	if (i2s_tdm->configuring || i2s_tdm->power_transition)
++		return -EBUSY;
++	if (i2s_tdm->started & bit)
++		return 0;
++	if (i2s_tdm->started || !i2s_tdm->stop_proven)
++		return -EBUSY;
++	i2s_tdm->irq_drained = false;
++	i2s_tdm->stop_proven = false;
++	ret = i2s_checked_dma_locked(i2s_tdm, stream, true);
++	if (!ret)
++		ret = regmap_write_bits(i2s_tdm->regmap, I2S_XFER,
++					 I2S_XFER_TXS_MASK | I2S_XFER_RXS_MASK,
++					 I2S_XFER_TXS_START | I2S_XFER_RXS_START);
++	if (ret) {
++		i2s_checked_error_locked(i2s_tdm, ret);
++		/* Keep the START errno; STOP still attempts every independent stage. */
++		i2s_checked_stop_locked(i2s_tdm, stream, true);
++		return ret;
++	}
++	i2s_tdm->started = bit;
++	return 0;
++}
++
++static int i2s_checked_trigger(struct rk_i2s_tdm_dev *i2s_tdm, int stream, int cmd)
++{
++	unsigned long flags;
++	int ret;
++
++	if (stream != SNDRV_PCM_STREAM_PLAYBACK && stream != SNDRV_PCM_STREAM_CAPTURE)
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		ret = i2s_checked_start_locked(i2s_tdm, stream);
++		break;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		ret = i2s_checked_stop_locked(i2s_tdm, stream, false);
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 	return ret;
+ }
+ 
+@@ -1011,6 +1472,64 @@
+ 		rockchip_i2s_tdm_xfer_stop(i2s_tdm, stream, false);
+ }
+ 
++
++static int i2s_checked_set_fmt(struct rk_i2s_tdm_dev *i2s_tdm,
++			       struct device *dev, unsigned int fmt)
++{
++	unsigned long flags;
++	int ret, put_ret;
++
++	/* This checked board path is the locked ordinary I2S master profile. */
++	if (fmt != (SND_SOC_DAIFMT_CBS_CFS | SND_SOC_DAIFMT_NB_NF |
++		    SND_SOC_DAIFMT_I2S))
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	ret = i2s_checked_gate_locked(i2s_tdm);
++	if (!ret)
++		i2s_tdm->configuring = true;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	if (ret)
++		return ret;
++
++	ret = pm_runtime_get_sync(dev);
++	if (ret < 0) {
++		pm_runtime_put_noidle(dev);
++		goto out;
++	}
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_CKR,
++				 I2S_CKR_MSS_MASK, I2S_CKR_MSS_MASTER);
++	if (ret)
++		goto put;
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_CKR,
++				 I2S_CKR_CKP_MASK | I2S_CKR_TLP_MASK |
++				 I2S_CKR_RLP_MASK, I2S_CKR_CKP_NORMAL |
++				 I2S_CKR_TLP_NORMAL | I2S_CKR_RLP_NORMAL);
++	if (ret)
++		goto put;
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_TXCR,
++				 I2S_TXCR_IBM_MASK | I2S_TXCR_TFS_MASK |
++				 I2S_TXCR_PBM_MASK, I2S_TXCR_IBM_NORMAL);
++	if (ret)
++		goto put;
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_RXCR,
++				 I2S_RXCR_IBM_MASK | I2S_RXCR_TFS_MASK |
++				 I2S_RXCR_PBM_MASK, I2S_RXCR_IBM_NORMAL);
++	if (!ret)
++		i2s_tdm->is_master_mode = true;
++put:
++	put_ret = pm_runtime_put(dev);
++	if (!ret && put_ret < 0)
++		ret = put_ret;
++out:
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (!ret && i2s_tdm->runtime_error)
++		ret = i2s_tdm->runtime_error;
++	i2s_checked_error_locked(i2s_tdm, ret);
++	i2s_tdm->configuring = false;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
+ static int rockchip_i2s_tdm_set_fmt(struct snd_soc_dai *cpu_dai,
+ 				    unsigned int fmt)
+ {
+@@ -1018,6 +1537,9 @@
+ 	unsigned int mask = 0, val = 0, tdm_val = 0;
+ 	int ret = 0;
+ 	bool is_tdm = i2s_tdm->tdm_mode;
++
++	if (i2s_tdm->checked_lifecycle)
++		return i2s_checked_set_fmt(i2s_tdm, cpu_dai->dev, fmt);
+ 
+ 	pm_runtime_get_sync(cpu_dai->dev);
+ 	mask = I2S_CKR_MSS_MASK;
+@@ -1634,7 +2156,9 @@
+ 	else
+ 		reg_fmt = I2S_RXCR;
+ 
+-	regmap_read(i2s_tdm->regmap, reg_fmt, &fmt);
++	ret = regmap_read(i2s_tdm->regmap, reg_fmt, &fmt);
++	if (i2s_tdm->checked_lifecycle && ret < 0)
++		return ret;
+ 	fmt &= I2S_TXCR_TFS_MASK;
+ 
+ 	if (fmt == I2S_TXCR_TFS_TDM_I2S && !i2s_tdm->tdm_fsync_half_frame) {
+@@ -1678,6 +2202,148 @@
+ 	return ret;
+ }
+ 
++
++static int i2s_checked_params_dirty(struct snd_pcm_substream *substream,
++				  struct rk_i2s_tdm_dev *i2s_tdm,
++				  unsigned int div_bclk,
++				  unsigned int div_lrck,
++				  unsigned int fmt, bool *dirty)
++{
++	unsigned int val;
++	int ret;
++
++	*dirty = false;
++	ret = regmap_read(i2s_tdm->regmap, I2S_CLKDIV, &val);
++	if (ret)
++		return ret;
++	*dirty |= (((val & I2S_CLKDIV_TXM_MASK) >> I2S_CLKDIV_TXM_SHIFT) + 1 != div_bclk);
++	ret = regmap_read(i2s_tdm->regmap, I2S_CKR, &val);
++	if (ret)
++		return ret;
++	*dirty |= (((val & I2S_CKR_TSD_MASK) >> I2S_CKR_TSD_SHIFT) + 1 != div_lrck);
++	ret = regmap_read(i2s_tdm->regmap,
++			  substream->stream == SNDRV_PCM_STREAM_PLAYBACK ?
++			  I2S_TXCR : I2S_RXCR, &val);
++	if (ret)
++		return ret;
++	*dirty |= ((val & (I2S_TXCR_VDW_MASK | I2S_TXCR_CSR_MASK)) != fmt);
++	return 0;
++}
++
++static int i2s_checked_params_trcm(struct snd_pcm_substream *substream,
++				 struct rk_i2s_tdm_dev *i2s_tdm,
++				 unsigned int div_bclk,
++				 unsigned int div_lrck, unsigned int fmt)
++{
++	int ret;
++
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_CLKDIV,
++				 I2S_CLKDIV_TXM_MASK | I2S_CLKDIV_RXM_MASK,
++				 I2S_CLKDIV_TXM(div_bclk) | I2S_CLKDIV_RXM(div_bclk));
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_CKR,
++				 I2S_CKR_TSD_MASK | I2S_CKR_RSD_MASK,
++				 I2S_CKR_TSD(div_lrck) | I2S_CKR_RSD(div_lrck));
++	if (ret)
++		return ret;
++	return regmap_update_bits(i2s_tdm->regmap,
++				  substream->stream == SNDRV_PCM_STREAM_PLAYBACK ?
++				  I2S_TXCR : I2S_RXCR,
++				  I2S_TXCR_VDW_MASK | I2S_TXCR_CSR_MASK, fmt);
++}
++
++static int i2s_checked_hw_params(struct snd_pcm_substream *substream,
++			       struct snd_pcm_hw_params *params,
++			       struct snd_soc_dai *dai)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	struct snd_dmaengine_dai_dma_data *dma_data;
++	struct clk *mclk;
++	unsigned int fmt, div_bclk, div_lrck;
++	unsigned int channels = params_channels(params);
++	u64 lrck_rate, bclk_rate;
++	unsigned long flags;
++	bool dirty;
++	int ret;
++
++	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK &&
++	    substream->stream != SNDRV_PCM_STREAM_CAPTURE)
++		return -EINVAL;
++	if (!params_rate(params) || !i2s_tdm->lrck_ratio ||
++	    (channels != 2 && channels != 4 && channels != 6 && channels != 8))
++		return -EINVAL;
++	switch (params_format(params)) {
++	case SNDRV_PCM_FORMAT_S8:
++		fmt = I2S_TXCR_VDW(8);
++		break;
++	case SNDRV_PCM_FORMAT_S16_LE:
++		fmt = I2S_TXCR_VDW(16);
++		break;
++	case SNDRV_PCM_FORMAT_S20_3LE:
++		fmt = I2S_TXCR_VDW(20);
++		break;
++	case SNDRV_PCM_FORMAT_S24_LE:
++		fmt = I2S_TXCR_VDW(24);
++		break;
++	case SNDRV_PCM_FORMAT_S32_LE:
++	case SNDRV_PCM_FORMAT_IEC958_SUBFRAME_LE:
++		fmt = I2S_TXCR_VDW(32);
++		break;
++	default:
++		return -EINVAL;
++	}
++	lrck_rate = (u64)params_rate(params) * i2s_tdm->lrck_ratio;
++	bclk_rate = lrck_rate * i2s_tdm->bclk_fs;
++	if (!bclk_rate || bclk_rate > 0xffffffffULL || lrck_rate > 0xffffffffULL)
++		return -EINVAL;
++
++	/* Admission spans sleeping clock operations without holding spinlock. */
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	ret = i2s_checked_gate_locked(i2s_tdm);
++	if (!ret)
++		i2s_tdm->configuring = true;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	if (ret)
++		return ret;
++	ret = rockchip_i2s_tdm_set_mclk(i2s_tdm, substream, &mclk);
++	if (ret)
++		goto out;
++	div_bclk = DIV_ROUND_CLOSEST(clk_get_rate(mclk), (unsigned int)bclk_rate);
++	div_lrck = (unsigned int)(bclk_rate / lrck_rate);
++	if (!div_bclk || div_bclk > 256 || !div_lrck || div_lrck > 256) {
++		ret = -EINVAL;
++		goto out;
++	}
++	ret = rockchip_i2s_tdm_params_channels(substream, params, dai);
++	if (ret < 0)
++		goto out;
++	fmt |= ret;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (i2s_tdm->runtime_error)
++		ret = i2s_tdm->runtime_error;
++	else if (i2s_tdm->shutting_down)
++		ret = -ESHUTDOWN;
++	else
++		ret = i2s_checked_params_dirty(substream, i2s_tdm, div_bclk, div_lrck, fmt, &dirty);
++	if (!ret && dirty)
++		ret = i2s_checked_params_trcm(substream, i2s_tdm, div_bclk, div_lrck, fmt);
++	if (!ret) {
++		dma_data = snd_soc_dai_get_dma_data(dai, substream);
++		dma_data->maxburst = MAXBURST_PER_FIFO * channels / 2;
++	}
++	i2s_checked_error_locked(i2s_tdm, ret);
++	i2s_tdm->configuring = false;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++out:
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	i2s_checked_error_locked(i2s_tdm, ret);
++	i2s_tdm->configuring = false;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
+ static int rockchip_i2s_tdm_hw_params(struct snd_pcm_substream *substream,
+ 				      struct snd_pcm_hw_params *params,
+ 				      struct snd_soc_dai *dai)
+@@ -1689,6 +2355,9 @@
+ 	unsigned int val = 0;
+ 	unsigned int mclk_rate, bclk_rate, lrck_rate, div_bclk = 4, div_lrck = 64;
+ 
++	if (i2s_tdm->checked_lifecycle)
++		return i2s_checked_hw_params(substream, params, dai);
++
+ #ifdef CONFIG_SND_SOC_ROCKCHIP_I2S_TDM_MULTI_LANES
+ 	if (i2s_tdm->is_tdm_multi_lanes)
+ 		rockchip_i2s_tdm_multi_lanes_set_clk(substream, params, dai);
+@@ -1761,6 +2430,9 @@
+ 	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
+ 	int ret = 0;
+ 
++	if (i2s_tdm->checked_lifecycle)
++		return i2s_checked_trigger(i2s_tdm, substream->stream, cmd);
++
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+@@ -1784,6 +2456,22 @@
+ 				       unsigned int freq, int dir)
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = to_info(cpu_dai);
++
++	unsigned long flags;
++	int ret;
++
++	if (i2s_tdm->checked_lifecycle) {
++		if ((stream != SNDRV_PCM_STREAM_PLAYBACK && stream != SNDRV_PCM_STREAM_CAPTURE) || !freq)
++			return -EINVAL;
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		ret = i2s_checked_gate_locked(i2s_tdm);
++		if (!ret) {
++			i2s_tdm->mclk_tx_freq = freq;
++			i2s_tdm->mclk_rx_freq = freq;
++		}
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		return ret;
++	}
+ 
+ 	/* Put set mclk rate into rockchip_i2s_tdm_set_mclk() */
+ 	if (i2s_tdm->clk_trcm) {
+@@ -2075,6 +2763,9 @@
+ 	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
+ 	unsigned int mask, val;
+ 
++	if (i2s_tdm->checked_lifecycle)
++		return -EOPNOTSUPP;
++
+ 	i2s_tdm->tdm_mode = true;
+ 	i2s_tdm->bclk_fs = slots * slot_width;
+ 	mask = TDM_SLOT_BIT_WIDTH_MSK | TDM_FRAME_WIDTH_MSK;
+@@ -2090,11 +2781,85 @@
+ 	return 0;
+ }
+ 
++
++static int i2s_checked_prepare(struct snd_pcm_substream *substream,
++			       struct snd_soc_dai *dai)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	unsigned long flags;
++	int ret;
++
++	if (!i2s_tdm->checked_lifecycle)
++		return 0;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	ret = i2s_checked_gate_locked(i2s_tdm);
++	if (!ret && !READ_ONCE(i2s_tdm->ready))
++		ret = -EAGAIN;
++	if (!ret)
++		ret = i2s_checked_stop_locked(i2s_tdm, substream->stream, true);
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static int i2s_checked_component_trigger(struct snd_soc_component *component,
++					 struct snd_pcm_substream *substream,
++					 int cmd)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_component_get_drvdata(component);
++	unsigned long flags;
++	int ret = 0;
++
++	if (!i2s_tdm->checked_lifecycle)
++		return 0;
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		if (i2s_tdm->runtime_error)
++			ret = i2s_tdm->runtime_error;
++		else if (i2s_tdm->shutting_down)
++			ret = -ESHUTDOWN;
++		else if (!READ_ONCE(i2s_tdm->ready))
++			ret = -EAGAIN;
++		else if (i2s_tdm->configuring || i2s_tdm->power_transition || (i2s_tdm->started & ~BIT(substream->stream)) ||
++			 (!i2s_tdm->started && !i2s_tdm->stop_proven))
++			ret = -EBUSY;
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		break;
++	default:
++		/* STOP must reach generic DMA cleanup even when CPU is poisoned. */
++		break;
++	}
++	return ret;
++}
++
+ static int rockchip_i2s_tdm_startup(struct snd_pcm_substream *substream,
+ 				    struct snd_soc_dai *dai)
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
+ 	int stream = substream->stream;
++	unsigned long flags;
++	int ret;
++
++	if (i2s_tdm->checked_lifecycle) {
++		if (stream != SNDRV_PCM_STREAM_PLAYBACK && stream != SNDRV_PCM_STREAM_CAPTURE)
++			return -EINVAL;
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		ret = i2s_checked_gate_locked(i2s_tdm);
++		if (!ret && !READ_ONCE(i2s_tdm->ready))
++			ret = -EAGAIN;
++		if (!ret && READ_ONCE(i2s_tdm->substreams[stream]))
++			ret = -EBUSY;
++		if (!ret) {
++			if (i2s_tdm->wait_time[stream])
++				substream->wait_time = msecs_to_jiffies(i2s_tdm->wait_time[stream]);
++			i2s_tdm->irq_drained = false;
++			WRITE_ONCE(i2s_tdm->substreams[stream], substream);
++		}
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		return ret;
++	}
+ 
+ 	if (i2s_tdm->substreams[stream])
+ 		return -EBUSY;
+@@ -2112,12 +2877,35 @@
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
+ 
++	unsigned long flags;
++	int ret = 0;
++
++	if (i2s_tdm->checked_lifecycle) {
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		if (READ_ONCE(i2s_tdm->substreams[substream->stream]) == substream)
++			WRITE_ONCE(i2s_tdm->substreams[substream->stream], NULL);
++		if (!(i2s_tdm->started & ~BIT(substream->stream)))
++			ret = i2s_checked_stop_locked(i2s_tdm, substream->stream, true);
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		/* Process context, outside stream/I2S locks; covers captured old pointer. */
++		if (i2s_tdm->irq > 0)
++			synchronize_irq(i2s_tdm->irq);
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		if (!READ_ONCE(i2s_tdm->substreams[0]) && !READ_ONCE(i2s_tdm->substreams[1]))
++			i2s_tdm->irq_drained = true;
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		if (ret)
++			dev_err(i2s_tdm->dev, "CPU shutdown stop unproved: %d\n", ret);
++		/* Sticky faults retain the device/clocks; checked PM refuses suspension. */
++		return;
++	}
+ 	i2s_tdm->substreams[substream->stream] = NULL;
+ }
+ 
+ static const struct snd_soc_dai_ops rockchip_i2s_tdm_dai_ops = {
+ 	.startup = rockchip_i2s_tdm_startup,
+ 	.shutdown = rockchip_i2s_tdm_shutdown,
++	.prepare = i2s_checked_prepare,
+ 	.hw_params = rockchip_i2s_tdm_hw_params,
+ 	.set_sysclk = rockchip_i2s_tdm_set_sysclk,
+ 	.set_fmt = rockchip_i2s_tdm_set_fmt,
+@@ -2127,8 +2915,15 @@
+ 
+ static const struct snd_soc_component_driver rockchip_i2s_tdm_component = {
+ 	.name = DRV_NAME,
++	.trigger = i2s_checked_component_trigger,
+ 	.controls = rockchip_i2s_tdm_snd_controls,
+ 	.num_controls = ARRAY_SIZE(rockchip_i2s_tdm_snd_controls),
++};
++
++/* The checked single-direction profile exposes only readonly lifecycle state. */
++static const struct snd_soc_component_driver rockchip_i2s_tdm_checked_component = {
++	.name = DRV_NAME,
++	.trigger = i2s_checked_component_trigger,
+ };
+ 
+ static bool rockchip_i2s_tdm_wr_reg(struct device *dev, unsigned int reg)
+@@ -2234,7 +3029,7 @@
+ 	int i;
+ 
+ 	if (IS_ERR(i2s_tdm->grf))
+-		return 0;
++		return i2s_tdm->checked_lifecycle ? PTR_ERR(i2s_tdm->grf) : 0;
+ 
+ 	switch (trcm) {
+ 	case I2S_CKR_TRCM_TXONLY:
+@@ -2253,8 +3048,11 @@
+ 		else
+ 			val = configs[i].rxonly;
+ 
+-		if (reg)
+-			regmap_write(i2s_tdm->grf, reg, val);
++		if (reg) {
++			int ret = regmap_write(i2s_tdm->grf, reg, val);
++			if (i2s_tdm->checked_lifecycle && ret)
++				return ret;
++		}
+ 	}
+ 
+ 	return 0;
+@@ -2570,11 +3368,63 @@
+ 	.get_fifo_count = rockchip_i2s_tdm_get_fifo_count,
+ };
+ 
++
++static irqreturn_t i2s_checked_isr(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++	struct snd_pcm_substream *playback = NULL, *capture = NULL;
++	unsigned long flags;
++	unsigned int val = 0;
++	int ret;
++	irqreturn_t result = IRQ_NONE;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (!i2s_tdm->irq_live || i2s_tdm->shutting_down)
++		goto unlock;
++	ret = regmap_read(i2s_tdm->regmap, I2S_INTSR, &val);
++	if (ret) {
++		i2s_checked_error_locked(i2s_tdm, ret);
++		/* Do not interpret failed INTSR. Notify only the known active owner. */
++		if (i2s_tdm->started & BIT(SNDRV_PCM_STREAM_PLAYBACK))
++			playback = READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK]);
++		if (i2s_tdm->started & BIT(SNDRV_PCM_STREAM_CAPTURE))
++			capture = READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_CAPTURE]);
++		i2s_checked_irq_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, false);
++		i2s_checked_irq_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, false);
++		result = IRQ_HANDLED;
++		goto unlock;
++	}
++	if (val & I2S_INTSR_TXUI_ACT) {
++		ret = i2s_checked_irq_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, false);
++		i2s_checked_error_locked(i2s_tdm, ret);
++		if (i2s_tdm->started & BIT(SNDRV_PCM_STREAM_PLAYBACK))
++			playback = READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK]);
++		result = IRQ_HANDLED;
++	}
++	if (val & I2S_INTSR_RXOI_ACT) {
++		ret = i2s_checked_irq_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, false);
++		i2s_checked_error_locked(i2s_tdm, ret);
++		if (i2s_tdm->started & BIT(SNDRV_PCM_STREAM_CAPTURE))
++			capture = READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_CAPTURE]);
++		result = IRQ_HANDLED;
++	}
++unlock:
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	/* ALSA takes stream locks then I2S lock. Never reverse this order. */
++	if (playback)
++		snd_pcm_stop_xrun(playback);
++	if (capture)
++		snd_pcm_stop_xrun(capture);
++	return result;
++}
++
+ static irqreturn_t rockchip_i2s_tdm_isr(int irq, void *devid)
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = (struct rk_i2s_tdm_dev *)devid;
+ 	struct snd_pcm_substream *substream;
+ 	u32 val;
++
++	if (i2s_tdm->checked_lifecycle)
++		return i2s_checked_isr(i2s_tdm);
+ 
+ 	regmap_read(i2s_tdm->regmap, I2S_INTSR, &val);
+ 	if (val & I2S_INTSR_TXUI_ACT) {
+@@ -2642,6 +3492,92 @@
+ 	return 0;
+ }
+ 
++
++static bool i2s_checked_profile(struct platform_device *pdev)
++{
++	struct device_node *node = pdev->dev.of_node;
++	struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	unsigned int val;
++
++	if (!res || res->start != 0xfe410000 || resource_size(res) != 0x1000 ||
++	    !of_device_is_compatible(node, "rockchip,rk3568-i2s-tdm") ||
++	    of_property_read_u32(node, "rockchip,clk-trcm", &val) || val != 1)
++		return false;
++	if (!of_property_read_u32(node, "rockchip,bclk-fs", &val) && val != 64)
++		return false;
++	return !of_property_read_bool(node, "rockchip,always-on") &&
++		!of_property_read_bool(node, "rockchip,hdmi-path") &&
++		!of_property_read_bool(node, "rockchip,mclk-calibrate") &&
++		!of_property_read_bool(node, "rockchip,io-multiplex") &&
++		!of_property_read_bool(node, "rockchip,tdm-multi-lanes") &&
++		!of_property_read_bool(node, "rockchip,no-dmaengine") &&
++		!of_property_read_bool(node, "rockchip,digital-loopback") &&
++		!of_find_property(node, "rockchip,i2s-tx-route", NULL) &&
++		!of_find_property(node, "rockchip,i2s-rx-route", NULL);
++}
++
++static int i2s_checked_initial_config(struct rk_i2s_tdm_dev *i2s_tdm, u32 addr)
++{
++	int ret;
++
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_DMACR,
++				 I2S_DMACR_TDL_MASK, I2S_DMACR_TDL(16));
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_DMACR,
++				 I2S_DMACR_RDL_MASK, I2S_DMACR_RDL(16));
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(i2s_tdm->regmap, I2S_CKR,
++				 I2S_CKR_TRCM_MASK, i2s_tdm->clk_trcm);
++	if (ret)
++		return ret;
++	return i2s_tdm->soc_data->init(i2s_tdm->dev, addr);
++}
++
++static ssize_t rk3568_lifecycle_state_show(struct device *dev,
++					struct device_attribute *attr, char *buf)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
++	unsigned long flags;
++	unsigned int owners, open_mask, stopped, irq_live, irq_drained;
++	unsigned int mclk_leases, hclk_lease, configuring, power_transition, shutting_down, ready;
++	unsigned int stop_reads;
++	int error;
++
++	if (!i2s_tdm->checked_lifecycle)
++		return -EOPNOTSUPP;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	owners = i2s_tdm->started;
++	open_mask = (!!READ_ONCE(i2s_tdm->substreams[0])) |
++		(!!READ_ONCE(i2s_tdm->substreams[1]) << 1);
++	error = i2s_tdm->runtime_error;
++	stopped = i2s_tdm->stop_proven;
++	irq_live = i2s_tdm->irq_live;
++	irq_drained = i2s_tdm->irq_drained;
++	mclk_leases = READ_ONCE(i2s_tdm->mclks_enabled);
++	hclk_lease = READ_ONCE(i2s_tdm->hclk_enabled);
++	configuring = i2s_tdm->configuring;
++	power_transition = i2s_tdm->power_transition;
++	shutting_down = i2s_tdm->shutting_down;
++	ready = READ_ONCE(i2s_tdm->ready);
++	stop_reads = i2s_tdm->stop_reads;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	/* No MMIO, PM get, clock operation or pointer disclosure in this reader. */
++	return sysfs_emit(buf, "version=1 ready=%u error=%d owners=%u open=%u stop_proven=%u stop_reads=%u irq_live=%u irq_drained=%u mclk_leases=%u hclk_lease=%u configuring=%u power_transition=%u shutting_down=%u\n",
++		ready, error, owners, open_mask, stopped, stop_reads, irq_live, irq_drained,
++		mclk_leases, hclk_lease, configuring, power_transition, shutting_down);
++}
++
++static DEVICE_ATTR_RO(rk3568_lifecycle_state);
++static struct attribute *i2s_checked_attrs[] = {
++	&dev_attr_rk3568_lifecycle_state.attr,
++	NULL,
++};
++static const struct attribute_group i2s_checked_group = {
++	.attrs = i2s_checked_attrs,
++};
++
+ static int rockchip_i2s_tdm_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *node = pdev->dev.of_node;
+@@ -2665,6 +3601,7 @@
+ 
+ 	i2s_tdm->dev = &pdev->dev;
+ 	i2s_tdm->lrck_ratio = 1;
++	i2s_tdm->checked_lifecycle = i2s_checked_profile(pdev);
+ 
+ 	of_id = of_match_device(rockchip_i2s_tdm_match, &pdev->dev);
+ 	if (!of_id)
+@@ -2799,9 +3736,11 @@
+ 	if (IS_ERR(i2s_tdm->hclk))
+ 		return PTR_ERR(i2s_tdm->hclk);
+ 
+-	ret = clk_prepare_enable(i2s_tdm->hclk);
+-	if (ret)
+-		return ret;
++	if (!i2s_tdm->checked_lifecycle) {
++		ret = clk_prepare_enable(i2s_tdm->hclk);
++		if (ret)
++			return ret;
++	}
+ 
+ 	i2s_tdm->mclk_tx = devm_clk_get(&pdev->dev, "mclk_tx");
+ 	if (IS_ERR(i2s_tdm->mclk_tx))
+@@ -2810,6 +3749,17 @@
+ 	i2s_tdm->mclk_rx = devm_clk_get(&pdev->dev, "mclk_rx");
+ 	if (IS_ERR(i2s_tdm->mclk_rx))
+ 		return PTR_ERR(i2s_tdm->mclk_rx);
++
++	if (i2s_tdm->checked_lifecycle) {
++		/* Reverse devres order: action precedes clk_put for all three handles. */
++		ret = devm_add_action_or_reset(&pdev->dev, i2s_checked_probe_clock_release, i2s_tdm);
++		if (ret)
++			return ret;
++		ret = clk_prepare_enable(i2s_tdm->hclk);
++		if (ret)
++			return ret;
++		i2s_tdm->hclk_enabled = true;
++	}
+ 
+ 	i2s_tdm->io_multiplex =
+ 		of_property_read_bool(node, "rockchip,io-multiplex");
+@@ -2843,13 +3793,17 @@
+ 	if (IS_ERR(regs))
+ 		return PTR_ERR(regs);
+ 
++	i2s_tdm->regs = regs;
+ 	i2s_tdm->regmap = devm_regmap_init_mmio(&pdev->dev, regs,
+ 						&rockchip_i2s_tdm_regmap_config);
+ 	if (IS_ERR(i2s_tdm->regmap))
+ 		return PTR_ERR(i2s_tdm->regmap);
+ 
+ 	irq = platform_get_irq_optional(pdev, 0);
++	if (i2s_tdm->checked_lifecycle && irq <= 0)
++		return irq ? irq : -ENXIO;
+ 	if (irq > 0) {
++		i2s_tdm->irq = irq;
+ 		ret = devm_request_irq(&pdev->dev, irq, rockchip_i2s_tdm_isr,
+ 				       IRQF_SHARED, node->name, i2s_tdm);
+ 		if (ret) {
+@@ -2881,6 +3835,11 @@
+ 	atomic_set(&i2s_tdm->refcount, 0);
+ 	dev_set_drvdata(&pdev->dev, i2s_tdm);
+ 
++	if (i2s_tdm->checked_lifecycle) {
++		ret = i2s_checked_initial_config(i2s_tdm, res->start);
++		if (ret)
++			return ret;
++	} else {
+ 	regmap_update_bits(i2s_tdm->regmap, I2S_DMACR, I2S_DMACR_TDL_MASK,
+ 			   I2S_DMACR_TDL(16));
+ 	regmap_update_bits(i2s_tdm->regmap, I2S_DMACR, I2S_DMACR_RDL_MASK,
+@@ -2890,6 +3849,7 @@
+ 
+ 	if (i2s_tdm->soc_data && i2s_tdm->soc_data->init)
+ 		i2s_tdm->soc_data->init(&pdev->dev, res->start);
++	}
+ 
+ 	/*
+ 	 * CLK_ALWAYS_ON should be placed after all registers write done,
+@@ -2913,13 +3873,20 @@
+ 	 * pm_runtime_enable is also a good option.
+ 	 */
+ 	pm_runtime_enable(&pdev->dev);
++	if (i2s_tdm->checked_lifecycle)
++		i2s_tdm->pm_enabled = true;
+ 	if (!pm_runtime_enabled(&pdev->dev)) {
+ 		ret = i2s_tdm_runtime_resume(&pdev->dev);
+-		if (ret)
++		if (ret) {
++			if (i2s_tdm->checked_lifecycle)
++				goto err_suspend;
+ 			goto err_pm_disable;
++		}
+ 	}
+ 
+ 	ret = devm_snd_soc_register_component(&pdev->dev,
++					      i2s_tdm->checked_lifecycle ?
++					      &rockchip_i2s_tdm_checked_component :
+ 					      &rockchip_i2s_tdm_component,
+ 					      soc_dai, 1);
+ 
+@@ -2940,12 +3907,25 @@
+ 
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "Could not register PCM\n");
++		if (i2s_tdm->checked_lifecycle)
++			goto err_suspend;
+ 		return ret;
+ 	}
+ 
++	if (i2s_tdm->checked_lifecycle) {
++		ret = devm_device_add_group(&pdev->dev, &i2s_checked_group);
++		if (ret)
++			goto err_suspend;
++		WRITE_ONCE(i2s_tdm->ready, true);
++	}
+ 	return 0;
+ 
+ err_suspend:
++	if (i2s_tdm->checked_lifecycle) {
++		/* Preserve registration errno; prove exit before any devres release. */
++		i2s_checked_quiesce(i2s_tdm, "probe late failure");
++		return ret;
++	}
+ 	if (!pm_runtime_status_suspended(&pdev->dev))
+ 		i2s_tdm_runtime_suspend(&pdev->dev);
+ err_pm_disable:
+@@ -2958,6 +3938,11 @@
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(&pdev->dev);
+ 
++	if (i2s_tdm->checked_lifecycle) {
++		i2s_checked_quiesce(i2s_tdm, "remove");
++		return 0;
++	}
++
+ 	pm_runtime_disable(&pdev->dev);
+ 	if (!pm_runtime_status_suspended(&pdev->dev))
+ 		i2s_tdm_runtime_suspend(&pdev->dev);
+@@ -2972,6 +3957,11 @@
+ static void rockchip_i2s_tdm_platform_shutdown(struct platform_device *pdev)
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(&pdev->dev);
++
++	if (i2s_tdm->checked_lifecycle) {
++		i2s_checked_quiesce(i2s_tdm, "platform shutdown");
++		return;
++	}
+ 
+ 	pm_runtime_get_sync(i2s_tdm->dev);
+ 	rockchip_i2s_tdm_stop(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK);
+@@ -2984,6 +3974,9 @@
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
+ 
++	if (i2s_tdm->checked_lifecycle)
++		return pm_runtime_force_suspend(dev);
++
+ 	regcache_mark_dirty(i2s_tdm->regmap);
+ 
+ 	return 0;
+@@ -2993,6 +3986,9 @@
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = dev_get_drvdata(dev);
+ 	int ret;
++
++	if (i2s_tdm->checked_lifecycle)
++		return pm_runtime_force_resume(dev);
+ 
+ 	ret = pm_runtime_get_sync(dev);
+ 	if (ret < 0)

@@ -1,0 +1,261 @@
+diff --git a/sound/soc/codecs/rk817_codec.c b/sound/soc/codecs/rk817_codec.c
+--- a/sound/soc/codecs/rk817_codec.c
++++ b/sound/soc/codecs/rk817_codec.c
+@@ -181,52 +181,82 @@
+ 
+ static int rk817_restart_dac_digital_clk(struct snd_soc_component *component)
+ {
+-	snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
++	int ret;
++
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
+ 				      PWD_DACBIAS_MASK, PWD_DACBIAS_DOWN);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(500, 600);
+-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 				      DAC_DIG_CLK_MASK, DAC_DIG_CLK_DIS);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(500, 600);
+-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 				      DAC_DIG_CLK_MASK, DAC_DIG_CLK_EN);
++	if (ret < 0)
++		return ret;
+ 	DBG("%s: %d - Playback DIG CLK OPS\n", __func__, __LINE__);
+ 	usleep_range(500, 600);
+-	snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
+ 				      PWD_DACBIAS_MASK, PWD_DACBIAS_ON);
++	if (ret < 0)
++		return ret;
+ 
+ 	return 0;
+ }
+ 
+ static int rk817_restart_dac_digital_clk_and_apll(struct snd_soc_component *component)
+ {
+-	snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
++	int ret;
++
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
+ 				      PWD_DACBIAS_MASK, PWD_DACBIAS_DOWN);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(500, 600);
+-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 				      DAC_DIG_CLK_MASK, DAC_DIG_CLK_DIS);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(500, 600);
+-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 				      DAC_DIG_CLK_MASK, DAC_DIG_CLK_EN);
++	if (ret < 0)
++		return ret;
+ 	DBG("%s: %d - Playback DIG CLK OPS\n", __func__, __LINE__);
+-	snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
+ 				      PLL_PW_DOWN, PLL_PW_DOWN);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(50, 60);
+-	snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
+ 				      PLL_PW_DOWN, PLL_PW_UP);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(500, 600);
+-	snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_ADAC_CFG1,
+ 				      PWD_DACBIAS_MASK, PWD_DACBIAS_ON);
++	if (ret < 0)
++		return ret;
+ 
+ 	return 0;
+ }
+ 
+ static int rk817_restart_adc_digital_clk(struct snd_soc_component *component)
+ {
+-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++	int ret;
++
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 				      ADC_DIG_CLK_MASK, ADC_DIG_CLK_DIS);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(500, 600);
+-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 				      ADC_DIG_CLK_MASK, ADC_DIG_CLK_EN);
++	if (ret < 0)
++		return ret;
+ 	DBG("%s: %d - Capture DIG CLK OPS\n", __func__, __LINE__);
+ 
+ 	return 0;
+@@ -234,17 +264,27 @@
+ 
+ static int rk817_restart_adc_digital_clk_and_apll(struct snd_soc_component *component)
+ {
+-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++	int ret;
++
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 				      ADC_DIG_CLK_MASK, ADC_DIG_CLK_DIS);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(500, 600);
+-	snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 				      ADC_DIG_CLK_MASK, ADC_DIG_CLK_EN);
++	if (ret < 0)
++		return ret;
+ 	DBG("%s: %d - Capture DIG CLK OPS\n", __func__, __LINE__);
+-	snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
+ 				      PLL_PW_DOWN, PLL_PW_DOWN);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(50, 60);
+-	snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_APLL_CFG5,
+ 				      PLL_PW_DOWN, PLL_PW_UP);
++	if (ret < 0)
++		return ret;
+ 	usleep_range(500, 600);
+ 
+ 	return 0;
+@@ -906,18 +946,30 @@
+ 	unsigned int rate = params_rate(params);
+ 	unsigned char apll_cfg3_val;
+ 	unsigned char dtop_digen_sr_lmt0;
++	unsigned int rx_width;
++	unsigned int tx_width;
++	int ret;
++
++	/* Reject unsupported parameters before any codec register operation. */
++	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK &&
++	    substream->stream != SNDRV_PCM_STREAM_CAPTURE)
++		return -EINVAL;
++	switch (params_format(params)) {
++	case SNDRV_PCM_FORMAT_S16_LE:
++		rx_width = VDW_RX_16BITS;
++		tx_width = VDW_TX_16BITS;
++		break;
++	case SNDRV_PCM_FORMAT_S24_LE:
++	case SNDRV_PCM_FORMAT_S32_LE:
++		rx_width = VDW_RX_24BITS;
++		tx_width = VDW_TX_24BITS;
++		break;
++	default:
++		return -EINVAL;
++	}
+ 
+ 	DBG("%s : sample rate = %dHz\n", __func__, rate);
+ 
+-	if (rk817->chip_ver <= 0x4) {
+-		DBG("%s: 0x4 and previous versions\n", __func__);
+-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c);
+-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95);
+-	} else {
+-		DBG("%s: 0x4 version later\n", __func__);
+-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04);
+-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5);
+-	}
+ 
+ 	switch (rate) {
+ 	case 8000:
+@@ -942,6 +994,25 @@
+ 		pr_err("Unsupported rate: %d\n", rate);
+ 		return -EINVAL;
+ 	}
++
++	if (rk817->chip_ver <= 0x4) {
++		DBG("%s: 0x4 and previous versions\n", __func__);
++		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c);
++		if (ret < 0)
++			return ret;
++		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95);
++		if (ret < 0)
++			return ret;
++	} else {
++		DBG("%s: 0x4 version later\n", __func__);
++		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04);
++		if (ret < 0)
++			return ret;
++		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5);
++		if (ret < 0)
++			return ret;
++	}
++
+ 
+ 	/**
+ 	 * Note that: If you use the ALSA hooks plugin, entering hw_params()
+@@ -949,34 +1020,29 @@
+ 	 * APLL_CFG3/DTOP_DIGEN_CLKE/DDAC_SR_LMT0 for different sample rates.
+ 	 */
+ 	if (!((substream->stream == SNDRV_PCM_STREAM_CAPTURE) && rk817->pdmdata_out_enable)) {
+-		snd_soc_component_write(component, RK817_CODEC_APLL_CFG3, apll_cfg3_val);
+-		snd_soc_component_update_bits(component, RK817_CODEC_DDAC_SR_LMT0,
++		ret = snd_soc_component_write(component, RK817_CODEC_APLL_CFG3, apll_cfg3_val);
++		if (ret < 0)
++			return ret;
++		ret = snd_soc_component_update_bits(component, RK817_CODEC_DDAC_SR_LMT0,
+ 					      DACSRT_MASK, dtop_digen_sr_lmt0);
+-		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+-			rk817_restart_dac_digital_clk_and_apll(component);
+-		else
+-			rk817_restart_adc_digital_clk_and_apll(component);
+-	}
+-
+-	switch (params_format(params)) {
+-	case SNDRV_PCM_FORMAT_S16_LE:
+-		snd_soc_component_write(component, RK817_CODEC_DI2S_RXCR2,
+-					VDW_RX_16BITS);
+-		snd_soc_component_write(component, RK817_CODEC_DI2S_TXCR2,
+-					VDW_TX_16BITS);
+-		break;
+-	case SNDRV_PCM_FORMAT_S24_LE:
+-	case SNDRV_PCM_FORMAT_S32_LE:
+-		snd_soc_component_write(component, RK817_CODEC_DI2S_RXCR2,
+-					VDW_RX_24BITS);
+-		snd_soc_component_write(component, RK817_CODEC_DI2S_TXCR2,
+-					VDW_TX_24BITS);
+-		break;
+-	default:
+-		return -EINVAL;
+-	}
+-
+-	return 0;
++		if (ret < 0)
++			return ret;
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
++			ret = rk817_restart_dac_digital_clk_and_apll(component);
++			if (ret < 0)
++				return ret;
++		} else {
++			ret = rk817_restart_adc_digital_clk_and_apll(component);
++			if (ret < 0)
++				return ret;
++		}
++	}
++
++	ret = snd_soc_component_write(component, RK817_CODEC_DI2S_RXCR2, rx_width);
++	if (ret < 0)
++		return ret;
++	ret = snd_soc_component_write(component, RK817_CODEC_DI2S_TXCR2, tx_width);
++	return ret < 0 ? ret : 0;
+ }
+ 
+ static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
+@@ -1085,7 +1151,6 @@
+ 			      SNDRV_PCM_RATE_96000)
+ 
+ #define RK817_FORMATS (SNDRV_PCM_FMTBIT_S16_LE |\
+-			SNDRV_PCM_FMTBIT_S20_3LE |\
+ 			SNDRV_PCM_FMTBIT_S24_LE |\
+ 			SNDRV_PCM_FMTBIT_S32_LE)
+ 

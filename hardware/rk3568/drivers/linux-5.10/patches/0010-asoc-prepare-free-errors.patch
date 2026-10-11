@@ -1,0 +1,105 @@
+diff --git a/sound/soc/soc-pcm.c b/sound/soc/soc-pcm.c
+--- a/sound/soc/soc-pcm.c
++++ b/sound/soc/soc-pcm.c
+@@ -805,11 +805,19 @@
+  * rate, etc.  This function is non atomic and can be called multiple times,
+  * it can refer to the runtime info.
+  */
++/* Match the callback selection in snd_soc_dai_digital_mute(). */
++static bool soc_pcm_has_mute(struct snd_soc_dai *dai, int stream)
++{
++	return dai->driver->ops && dai->driver->ops->mute_stream &&
++		(stream == SNDRV_PCM_STREAM_PLAYBACK ||
++		 !dai->driver->ops->no_capture_mute);
++}
++
+ static int soc_pcm_prepare(struct snd_pcm_substream *substream)
+ {
+ 	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+ 	struct snd_soc_dai *dai;
+-	int i, ret = 0;
++	int i, j, ret = 0;
+ 
+ 	mutex_lock_nested(&rtd->card->pcm_mutex, rtd->card->pcm_subclass);
+ 
+@@ -837,8 +845,27 @@
+ 	snd_soc_dapm_stream_event(rtd, substream->stream,
+ 			SND_SOC_DAPM_STREAM_START);
+ 
+-	for_each_rtd_dais(rtd, i, dai)
+-		snd_soc_dai_digital_mute(dai, 0, substream->stream);
++	for_each_rtd_dais(rtd, i, dai) {
++		if (!soc_pcm_has_mute(dai, substream->stream))
++			continue;
++		ret = snd_soc_dai_digital_mute(dai, 0, substream->stream);
++		if (ret < 0)
++			goto err_mute;
++	}
++	ret = 0;
++	goto out;
++
++err_mute:
++	/* Include the failing DAI: its callback may already have done I/O. */
++	for_each_rtd_dais(rtd, j, dai) {
++		if (j > i)
++			break;
++		if (soc_pcm_has_mute(dai, substream->stream))
++			snd_soc_dai_digital_mute(dai, 1, substream->stream);
++	}
++	/* Pair this prepare's start without recursively taking pcm_mutex. */
++	snd_soc_dapm_stream_event(rtd, substream->stream,
++			SND_SOC_DAPM_STREAM_STOP);
+ 
+ out:
+ 	mutex_unlock(&rtd->card->pcm_mutex);
+@@ -994,7 +1021,7 @@
+ {
+ 	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+ 	struct snd_soc_dai *dai;
+-	int i;
++	int i, ret = 0;
+ 
+ 	mutex_lock_nested(&rtd->card->pcm_mutex, rtd->card->pcm_subclass);
+ 
+@@ -1008,8 +1035,12 @@
+ 			dai->sample_bits = 0;
+ 		}
+ 
+-		if (active == 1)
+-			snd_soc_dai_digital_mute(dai, 1, substream->stream);
++		if (active == 1 && soc_pcm_has_mute(dai, substream->stream)) {
++			int err = snd_soc_dai_digital_mute(dai, 1, substream->stream);
++
++			if (err < 0 && !ret)
++				ret = err;
++		}
+ 	}
+ 
+ 	/* free any machine hw params */
+@@ -1027,7 +1058,7 @@
+ 	}
+ 
+ 	mutex_unlock(&rtd->card->pcm_mutex);
+-	return 0;
++	return ret;
+ }
+ 
+ static int soc_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
+diff --git a/sound/core/pcm_native.c b/sound/core/pcm_native.c
+--- a/sound/core/pcm_native.c
++++ b/sound/core/pcm_native.c
+@@ -1934,9 +1934,11 @@
+ 	int err;
+ 	snd_pcm_sync_stop(substream, true);
+ 	err = substream->ops->prepare(substream);
+-	if (err < 0)
+-		return err;
+-	return snd_pcm_do_reset(substream, state);
++	if (err >= 0)
++		err = snd_pcm_do_reset(substream, state);
++	if (err < 0)
++		snd_pcm_set_state(substream, SNDRV_PCM_STATE_SETUP);
++	return err;
+ }
+ 
+ static void snd_pcm_post_prepare(struct snd_pcm_substream *substream,

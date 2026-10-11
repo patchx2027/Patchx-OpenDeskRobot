@@ -1,0 +1,14 @@
+diff --git a/kernel/printk/printk.c b/kernel/printk/printk.c
+--- a/kernel/printk/printk.c
++++ b/kernel/printk/printk.c
+@@ -3569,8 +3569,10 @@ bool pr_flush(int timeout_ms, bool reset_on_progress)
+ 	u64 diff;
+ 	u64 seq;
+ 
++	/* Preemptible RCU readers must not voluntarily sleep. */
+ 	may_sleep = (preemptible() &&
+ 		     !in_softirq() &&
++		     !rcu_preempt_depth() &&
+ 		     system_state >= SYSTEM_RUNNING);
+ 
+ 	seq = prb_next_seq(prb);

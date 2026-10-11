@@ -1,0 +1,20 @@
+diff --git a/drivers/mfd/rk808.c b/drivers/mfd/rk808.c
+--- a/drivers/mfd/rk808.c
++++ b/drivers/mfd/rk808.c
+@@ -1077,7 +1077,15 @@ static void rk817_of_property_prepare(struct rk808 *rk808, struct device *dev)
+ 		regmap_update_bits(rk808->regmap, RK817_POWER_CONFIG,
+ 				   RK817_BUCK3_FB_RES_MSK,
+ 				   RK817_BUCK3_FB_RES_EXT);
+-	dev_info(dev, "support dcdc3 fb mode:%d, %d\n", ret, inner);
++	if (ret)
++		dev_info(dev,
++			 "dcdc3 feedback policy: external (fb-inner-reg-idxs unavailable: %d)\n",
++			 ret);
++	else
++		dev_info(dev,
++			 "dcdc3 feedback policy: %s (fb-inner-reg-idxs=%u)\n",
++			 inner == RK817_ID_DCDC3 ? "internal" : "external",
++			 inner);
+ 
+ 	ret = of_property_read_u32(np, "pmic-reset-func", &func);
+ 

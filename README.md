@@ -2,12 +2,14 @@
 
 PatchX 桌面机器人开源项目，面向语音交互、角色表现、视觉处理和设备控制的开发与交流。
 
-目前公开的是 **Android 应用源码发布版（source release）**。代码位于 [`software/android/`](software/android/README.md)。当前缺少 Unity 工程和部分第三方输入，尚不能仅凭本仓库构建完整 APK；不提供 Android 系统镜像或电机控制器固件。
+目前公开 Android 应用源码、RK3568 设备树参考，以及经过实机验证的 Linux 驱动补丁。Android 代码位于 [`software/android/`](software/android/README.md)。当前缺少 Unity 工程和部分第三方输入，尚不能仅凭本仓库构建完整 APK；不提供 Android 系统镜像或电机控制器固件。
 
 ## 开始阅读
 
 - [Android 工程说明与构建准备](software/android/README.md)
 - [RK3568 设备树](hardware/rk3568/device-tree/README.md)
+- [设备树阅读与修改教程](hardware/rk3568/device-tree/GUIDE.md)
+- [RK3568 Linux 驱动与验证记录](hardware/rk3568/drivers/linux-5.10/README.md)
 - [第三方依赖与待补输入](software/android/docs/THIRD_PARTY.md)
 - [发布范围、来源与验证状态](software/android/docs/RELEASE_STATUS.md)
 
@@ -15,7 +17,7 @@ PatchX 桌面机器人开源项目，面向语音交互、角色表现、视觉�
 
 ```text
 software/android/     Android 应用源码、资源与构建配置
-hardware/rk3568/       RK3568 设备树与硬件说明
+hardware/rk3568/       RK3568 设备树、Linux 驱动补丁与验证说明
 LICENSE               第一方代码的 MIT 许可证
 qr-group.png          微信讨论群二维码
 ```

@@ -1,0 +1,178 @@
+diff --git a/sound/soc/codecs/rk817_codec.c b/sound/soc/codecs/rk817_codec.c
+--- a/sound/soc/codecs/rk817_codec.c
++++ b/sound/soc/codecs/rk817_codec.c
+@@ -83,6 +83,8 @@
+ 	bool use_ext_amplifier;
+ 	bool adc_for_loopback;
+ 	bool resume_path;
++	/* First mute I/O error; cached success does not establish recovery. */
++	int mute_io_error;
+ 
+ 	bool out_l2spk_r2hp;
+ 	long int playback_path;
+@@ -1050,40 +1052,70 @@
+ 	struct snd_soc_component *component = dai->component;
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+ 
++	int ret;
++
++	/* Reject the direction before GPIO or register operations. */
++	if (stream != SNDRV_PCM_STREAM_PLAYBACK)
++		return -EINVAL;
++	if (rk817->playback_path == OFF)
++		mute = 1;
++	if (!mute && rk817->mute_io_error)
++		return rk817->mute_io_error;
++
+ 	DBG("%s %d\n", __func__, mute);
+ 
+ 	if (mute) {
+ 		rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 0);
+ 		rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 0);
+ 
+-		snd_soc_component_update_bits(component,
+-					      RK817_CODEC_DDAC_MUTE_MIXCTL,
+-					      DACMT_ENABLE, DACMT_ENABLE);
+-		rk817_restart_dac_digital_clk(component);
+-		snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+-					      I2SRX_EN_MASK, I2SRX_DIS);
++		ret = snd_soc_component_update_bits(component,
++					    RK817_CODEC_DDAC_MUTE_MIXCTL,
++					    DACMT_ENABLE, DACMT_ENABLE);
++		if (ret < 0) {
++			if (!rk817->mute_io_error)
++				rk817->mute_io_error = ret;
++		} else {
++			ret = rk817_restart_dac_digital_clk(component);
++			if (ret < 0 && !rk817->mute_io_error)
++				rk817->mute_io_error = ret;
++		}
++		/* Disable RX even if mute or clock restart failed. */
++		ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++					    I2SRX_EN_MASK, I2SRX_DIS);
++		if (ret < 0 && !rk817->mute_io_error)
++			rk817->mute_io_error = ret;
+ 	} else {
+-		snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++		ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+ 					      I2SRX_EN_MASK, I2SRX_EN);
+-		snd_soc_component_update_bits(component,
++		if (ret < 0)
++			goto err_mute;
++		ret = snd_soc_component_update_bits(component,
+ 					      RK817_CODEC_DDAC_MUTE_MIXCTL,
+ 					      DACMT_ENABLE, DACMT_DISABLE);
++		if (ret < 0)
++			goto err_mute;
+ 
+ 		switch (rk817->playback_path) {
+ 		case SPK_PATH:
+ 		case RING_SPK:
+ 			if (rk817->out_l2spk_r2hp) {
+-				snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++				ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+ 						PWD_DACBIAS_ON | PWD_DACD_ON |
+ 						PWD_DACL_ON | PWD_DACR_ON);
++				if (ret < 0)
++					goto err_mute;
+ 			} else if (!rk817->use_ext_amplifier) {
+-				snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++				ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+ 						PWD_DACBIAS_ON | PWD_DACD_ON |
+ 						PWD_DACL_DOWN | PWD_DACR_DOWN);
++				if (ret < 0)
++					goto err_mute;
+ 			} else {
+-				snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++				ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+ 						PWD_DACBIAS_ON | PWD_DACD_DOWN |
+ 						PWD_DACL_ON | PWD_DACR_ON);
++				if (ret < 0)
++					goto err_mute;
+ 			}
+ 			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 1);
+ 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 0);
+@@ -1092,17 +1124,21 @@
+ 		case HP_NO_MIC:
+ 		case RING_HP:
+ 		case RING_HP_NO_MIC:
+-			snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++			ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+ 					PWD_DACBIAS_ON | PWD_DACD_DOWN |
+ 					PWD_DACL_ON | PWD_DACR_ON);
++			if (ret < 0)
++				goto err_mute;
+ 			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 0);
+ 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
+ 			break;
+ 		case SPK_HP:
+ 		case RING_SPK_HP:
+-			snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++			ret = snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
+ 					PWD_DACBIAS_ON | PWD_DACD_ON |
+ 					PWD_DACL_ON | PWD_DACR_ON);
++			if (ret < 0)
++				goto err_mute;
+ 			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 1);
+ 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
+ 			break;
+@@ -1111,29 +1147,48 @@
+ 		}
+ 	}
+ 
+-	return 0;
++	return rk817->mute_io_error;
++
++err_mute:
++	if (!rk817->mute_io_error)
++		rk817->mute_io_error = ret;
++	/* One bounded checked mute attempt; cleanup cannot erase the first error. */
++	rk817_digital_mute_dac(dai, 1, stream);
++	return rk817->mute_io_error;
+ }
+ 
+ static int rk817_digital_mute_adc(struct snd_soc_dai *dai, int mute, int stream)
+ {
+ 	struct snd_soc_component *component = dai->component;
+-
+-	if (mute)
+-		snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+-					      I2STX_EN_MASK, I2STX_DIS);
+-	else
+-		snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
+-					      I2STX_EN_MASK, I2STX_EN);
+-
+-	return 0;
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++	int ret;
++
++	if (stream != SNDRV_PCM_STREAM_CAPTURE)
++		return -EINVAL;
++	if (rk817->capture_path == MIC_OFF)
++		mute = 1;
++	if (!mute && rk817->mute_io_error)
++		return rk817->mute_io_error;
++
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++					    I2STX_EN_MASK, mute ? I2STX_DIS : I2STX_EN);
++	if (ret < 0) {
++		if (!rk817->mute_io_error)
++			rk817->mute_io_error = ret;
++		if (!mute)
++			rk817_digital_mute_adc(dai, 1, stream);
++	}
++
++	return rk817->mute_io_error;
+ }
+ 
+ static int rk817_digital_mute(struct snd_soc_dai *dai, int mute, int stream)
+ {
+ 	if (stream == SNDRV_PCM_STREAM_PLAYBACK)
+ 		return rk817_digital_mute_dac(dai, mute, stream);
+-	else
++	if (stream == SNDRV_PCM_STREAM_CAPTURE)
+ 		return rk817_digital_mute_adc(dai, mute, stream);
++	return -EINVAL;
+ }
+ 
+ #define RK817_PLAYBACK_RATES (SNDRV_PCM_RATE_8000 |\

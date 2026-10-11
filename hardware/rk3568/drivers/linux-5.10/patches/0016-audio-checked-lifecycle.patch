@@ -1,0 +1,3146 @@
+--- a/drivers/dma/pl330.c
++++ b/drivers/dma/pl330.c
+@@ -465,6 +465,8 @@
+ 	bool active;
+ 	/* Lifecycle fields protected by lock; producers/runners are waitable. */
+ 	u64 epoch;
++	u64 fault_notified_epoch;
++	bool fault_notified;
+ 	bool quiescing;
+ 	bool runner_active;
+ 	bool rerun;
+@@ -1879,8 +1881,14 @@
+ static void pl330_error_locked(struct pl330_dmac *pl330, int error)
+ {
+ 	pl330->stop_proven = false;
+-	if (!pl330->lifecycle_error)
++	if (!pl330->lifecycle_error) {
+ 		pl330->lifecycle_error = error;
++		/* tasks is initialized before state becomes INIT. No PM/MMIO here. */
++		if (pl330->state == INIT || pl330->state == DYING) {
++			pl330->fault_tasklet_queued = true;
++			tasklet_schedule(&pl330->tasks);
++		}
++	}
+ }
+ 
+ static void pl330_pm_error_locked(struct pl330_dmac *pl330, int error)
+@@ -1981,6 +1989,68 @@
+ 	pl330_desc_put(desc);
+ }
+ 
++/* PL330 has at most eight physical channel threads (CR0.num_chan is 3 bits). */
++#define PL330_MAX_FAULT_CALLBACKS 8
++
++struct pl330_fault_callback {
++	struct dma_pl330_desc *desc;
++	struct dmaengine_desc_callback callback;
++};
++
++/* Both pch and controller locks held; no callback is invoked here. */
++static bool pl330_fault_capture_locked(struct dma_pl330_chan *pch,
++				      struct pl330_fault_callback *borrow)
++{
++	struct dma_pl330_desc *desc;
++	struct list_head *head;
++	int i;
++
++	if (!pch->dmac->lifecycle_error || pch->quiescing || !pch->thread ||
++	    (pch->fault_notified && pch->fault_notified_epoch == pch->epoch))
++		return false;
++	for (i = 0; i < 2; i++) {
++		head = i ? &pch->submitted_list : &pch->work_list;
++		list_for_each_entry(desc, head, node) {
++			if (desc->owner_pch != pch || desc->owner_epoch != pch->epoch ||
++			    !desc->txd.callback_result)
++				continue;
++			borrow->desc = pl330_desc_get(desc);
++			if (!borrow->desc)
++				continue;
++			dmaengine_desc_get_callback(&desc->txd, &borrow->callback);
++			pch->fault_notified = true;
++			pch->fault_notified_epoch = pch->epoch;
++			return true;
++		}
++	}
++	return false;
++}
++
++static void pl330_fault_notify(struct pl330_dmac *pl330)
++{
++	struct pl330_fault_callback borrowed[PL330_MAX_FAULT_CALLBACKS];
++	struct dmaengine_result result = { .result = DMA_TRANS_ABORTED, .residue = 0 };
++	struct dma_pl330_chan *pch;
++	unsigned long flags;
++	unsigned int i, count = 0;
++
++	/* Capture every borrower before the first sink can jointly STOP peers. */
++	for (i = 0; i < pl330->num_peripherals && count < ARRAY_SIZE(borrowed); i++) {
++		pch = &pl330->peripherals[i];
++		spin_lock_irqsave(&pch->lock, flags);
++		spin_lock(&pl330->lock);
++		if (pl330_fault_capture_locked(pch, &borrowed[count]))
++			count++;
++		spin_unlock(&pl330->lock);
++		spin_unlock_irqrestore(&pch->lock, flags);
++	}
++	for (i = 0; i < count; i++) {
++		/* Do not read descriptor fields after cutoff; use the borrowed snapshot. */
++		dmaengine_desc_callback_invoke(&borrowed[i].callback, &result);
++		pl330_desc_put(borrowed[i].desc);
++	}
++}
++
+ static void pl330_dotask(struct tasklet_struct *t)
+ {
+ 	struct pl330_dmac *pl330 = from_tasklet(pl330, t, tasks);
+@@ -1990,6 +2060,10 @@
+ 
+ 	spin_lock_irqsave(&pl330->lock, flags);
+ 	pl330->fault_tasklet_queued = false;
++	spin_unlock_irqrestore(&pl330->lock, flags);
++	/* PM failure/removal/reset early exits must not suppress borrowed faults. */
++	pl330_fault_notify(pl330);
++	spin_lock_irqsave(&pl330->lock, flags);
+ 	if (pl330->pm_failed || pl330->removing || pl330->system_suspended) {
+ 		pl330->dmac_tbd.reset_dmac = false;
+ 		pl330->dmac_tbd.reset_mngr = false;
+--- a/include/sound/dmaengine_pcm.h
++++ b/include/sound/dmaengine_pcm.h
+@@ -35,6 +35,9 @@
+ 	struct dma_chan *chan);
+ int snd_dmaengine_pcm_close(struct snd_pcm_substream *substream);
+ int snd_dmaengine_pcm_quiesce(struct snd_pcm_substream *substream);
++/* Open-only binding; atomic sink invoked outside DMA/PCM lifecycle locks. */
++int snd_dmaengine_pcm_set_error_sink(struct snd_pcm_substream *substream,
++	void (*sink)(struct snd_pcm_substream *, int, void *), void *arg);
+ 
+ int snd_dmaengine_pcm_open_request_chan(struct snd_pcm_substream *substream,
+ 	dma_filter_fn filter_fn, void *filter_data);
+--- a/include/sound/soc-dai.h
++++ b/include/sound/soc-dai.h
+@@ -208,6 +208,18 @@
+ int snd_soc_dai_compr_get_metadata(struct snd_soc_dai *dai,
+ 				   struct snd_compr_stream *cstream,
+ 				   struct snd_compr_metadata *metadata);
++
++/* Fixed two-slot software ownership; callers hold their endpoint state lock. */
++struct snd_soc_dai_params_state {
++	struct snd_pcm_substream *owner[2];
++	struct snd_pcm_substream *pending;
++	struct snd_pcm_substream *transaction;
++	struct snd_pcm_substream *old_owner;
++	u64 generation, cookie;
++	unsigned int old_rate, old_channels, old_sample_bits;
++	unsigned int old_clock[2];
++	bool reuse, applied, undo;
++};
+ 
+ struct snd_soc_dai_ops {
+ 	/*
+@@ -283,6 +295,19 @@
+ 
+ 	/* bit field */
+ 	unsigned int no_capture_mute:1;
++
++	/* Optional whole-chain, explicitly opt-in parameter ownership transaction. */
++	int (*hw_params_begin)(struct snd_pcm_substream *, struct snd_pcm_hw_params *,
++			       struct snd_soc_dai *, u64 *cookie);
++	int (*hw_params_commit)(struct snd_pcm_substream *, struct snd_soc_dai *, u64 cookie);
++	void (*hw_params_abort)(struct snd_pcm_substream *, struct snd_soc_dai *,
++			       u64 cookie, int first_error, bool shared_io_possible);
++	int (*hw_params_reuse)(struct snd_pcm_substream *, struct snd_soc_dai *);
++	int (*hw_params_free_check)(struct snd_pcm_substream *, struct snd_soc_dai *);
++	void (*hw_params_fault)(struct snd_soc_dai *, int first_errno);
++	/* CPU-only atomic fault admission: no sleeping or codec callbacks. */
++	void (*pcm_async_fault)(struct snd_soc_dai *, int first_errno);
++
+ };
+ 
+ struct snd_soc_cdai_ops {
+@@ -395,6 +420,121 @@
+ 	unsigned int probed:1;
+ };
+ 
++/* NULL hooks preserve legacy behavior; partial hooks never imply legacy. */
++static inline bool snd_soc_dai_hw_params_any(struct snd_soc_dai *dai)
++{
++	const struct snd_soc_dai_ops *ops = dai->driver->ops;
++
++	return ops && (ops->hw_params_begin || ops->hw_params_commit ||
++		       ops->hw_params_abort || ops->hw_params_reuse ||
++		       ops->hw_params_free_check || ops->hw_params_fault);
++}
++
++static inline bool snd_soc_dai_hw_params_managed(struct snd_soc_dai *dai)
++{
++	const struct snd_soc_dai_ops *ops = dai->driver->ops;
++
++	return ops && ops->hw_params_begin && ops->hw_params_commit &&
++		ops->hw_params_abort && ops->hw_params_reuse &&
++		ops->hw_params_free_check && ops->hw_params_fault && ops->hw_free;
++}
++
++static inline int snd_soc_dai_hw_params_reuse(struct snd_soc_dai *dai,
++					    struct snd_pcm_substream *substream)
++{
++	if (!snd_soc_dai_hw_params_managed(dai))
++		return -EINVAL;
++	return dai->driver->ops->hw_params_reuse(substream, dai);
++}
++
++static inline int snd_soc_dai_hw_params_release(struct snd_soc_dai *dai,
++					      struct snd_pcm_substream *substream)
++{
++	if (!snd_soc_dai_hw_params_managed(dai))
++		return -EINVAL;
++	return dai->driver->ops->hw_free(substream, dai);
++}
++
++static inline int snd_soc_dai_params_begin_locked(struct snd_soc_dai_params_state *p,
++		struct snd_soc_dai *dai, struct snd_pcm_substream *ss, u64 *cookie)
++{
++	int stream = ss->stream;
++
++	if ((stream != 0 && stream != 1) || !cookie)
++		return -EINVAL;
++	if (p->pending || (p->owner[stream] && p->owner[stream] != ss))
++		return -EBUSY;
++	if (p->generation == ~(u64)0)
++		return -EOVERFLOW;
++	if ((p->owner[0] || p->owner[1]) &&
++	    (dai->rate != 48000 || dai->channels != 2 || dai->sample_bits != 16))
++		return -EINVAL;
++	p->generation++;
++	p->cookie = p->generation;
++	p->transaction = ss;
++	p->pending = ss;
++	p->old_owner = p->owner[stream];
++	p->old_rate = dai->rate;
++	p->old_channels = dai->channels;
++	p->old_sample_bits = dai->sample_bits;
++	p->reuse = p->owner[0] || p->owner[1];
++	p->applied = false;
++	p->undo = true;
++	*cookie = p->cookie;
++	return 0;
++}
++
++static inline int snd_soc_dai_params_commit_locked(struct snd_soc_dai_params_state *p,
++		struct snd_soc_dai *dai, struct snd_pcm_substream *ss, u64 cookie)
++{
++	if (!cookie || p->cookie != cookie || p->pending != ss ||
++	    p->transaction != ss || !p->undo || !p->applied)
++		return -EINVAL;
++	p->owner[ss->stream] = ss;
++	dai->rate = 48000;
++	dai->channels = 2;
++	dai->sample_bits = 16;
++	p->pending = NULL;
++	/* Keep undo valid until the next serialized begin/release. */
++	return 0;
++}
++
++static inline bool snd_soc_dai_params_abort_locked(struct snd_soc_dai_params_state *p,
++		struct snd_soc_dai *dai, struct snd_pcm_substream *ss, u64 cookie)
++{
++	if (!cookie || p->cookie != cookie || p->transaction != ss || !p->undo)
++		return false;
++	p->owner[ss->stream] = p->old_owner;
++	dai->rate = p->old_rate;
++	dai->channels = p->old_channels;
++	dai->sample_bits = p->old_sample_bits;
++	p->pending = NULL;
++	p->transaction = NULL;
++	p->undo = false;
++	p->applied = false;
++	return true;
++}
++
++static inline int snd_soc_dai_params_free_locked(struct snd_soc_dai_params_state *p,
++		struct snd_soc_dai *dai, struct snd_pcm_substream *ss)
++{
++	if (ss->stream != 0 && ss->stream != 1)
++		return -EINVAL;
++	if (p->pending)
++		return -EBUSY;
++	if (p->owner[ss->stream] && p->owner[ss->stream] != ss)
++		return -EINVAL;
++	p->owner[ss->stream] = NULL;
++	p->transaction = NULL;
++	p->undo = false;
++	if (!p->owner[0] && !p->owner[1]) {
++		dai->rate = 0;
++		dai->channels = 0;
++		dai->sample_bits = 0;
++	}
++	return 0;
++}
++
+ static inline struct snd_soc_pcm_stream *
+ snd_soc_dai_get_pcm_stream(const struct snd_soc_dai *dai, int stream)
+ {
+--- a/include/sound/soc.h
++++ b/include/sound/soc.h
+@@ -436,6 +436,10 @@
+ 			 const struct snd_soc_component_driver *component_driver,
+ 			 struct snd_soc_dai_driver *dai_drv, int num_dai);
+ void snd_soc_unregister_component(struct device *dev);
++/* Process-only opt-in shutdown: closes admission, waits for files, then unbinds. */
++int snd_soc_component_shutdown_card(struct device *dev,
++			 const struct snd_soc_component_driver *driver,
++			 unsigned int timeout_ms);
+ void snd_soc_unregister_component_by_driver(struct device *dev,
+ 			 const struct snd_soc_component_driver *component_driver);
+ struct snd_soc_component *snd_soc_lookup_component_nolocked(struct device *dev,
+--- a/sound/core/pcm_dmaengine.c
++++ b/sound/core/pcm_dmaengine.c
+@@ -30,6 +30,8 @@
+ 	unsigned int pos;
+ 	bool checked, exposed, quiescing, closing, go_failed;
+ 	int first_error;
++	void (*error_sink)(struct snd_pcm_substream *, int, void *);
++	void *error_sink_arg;
+ 	spinlock_t lifecycle_lock;
+ 	atomic_t operations;
+ 	wait_queue_head_t drain_wait;
+@@ -38,6 +40,10 @@
+ 	struct snd_dma_buffer *owner_buffer;
+ 	struct snd_dma_buffer owner;
+ };
++
++static int dmaengine_pcm_check_fault(struct snd_pcm_substream *substream);
++static void dmaengine_pcm_notify_fault(struct snd_pcm_substream *substream,
++				      int error, bool stop_xrun);
+ 
+ static inline struct dmaengine_pcm_runtime_data *substream_to_prtd(
+ 	const struct snd_pcm_substream *substream)
+@@ -206,6 +212,8 @@
+ 		return 0;
+ 	if (!prtd->checked)
+ 		return dmaengine_synchronize_checked(prtd->dma_chan);
++	/* PREPARE/HW_FREE may have no descriptor; close CPU admission first. */
++	dmaengine_pcm_check_fault(substream);
+ 	mutex_lock(&prtd->quiesce_mutex);
+ 	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+ 	prtd->quiescing = true;
+@@ -217,6 +225,8 @@
+ 	/* A checked negative return means all old software callbacks are drained. */
+ 	ret = dmaengine_synchronize_checked(prtd->dma_chan);
+ 	first = dmaengine_pcm_error(prtd, ret);
++	if (ret < 0)
++		dmaengine_pcm_notify_fault(substream, ret, false);
+ 	if (prtd->exposed) {
+ 		buffer = runtime->dma_buffer_p;
+ 		if (buffer != prtd->owner_buffer || !buffer ||
+@@ -269,6 +279,87 @@
+ 	snd_pcm_period_elapsed(substream);
+ }
+ 
++/* Called from atomic contexts. The binding is immutable from open to drain. */
++static void dmaengine_pcm_notify_fault(struct snd_pcm_substream *substream,
++				      int error, bool stop_xrun)
++{
++	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
++	void (*sink)(struct snd_pcm_substream *, int, void *);
++	void *sink_arg;
++	unsigned long flags;
++
++	if (!prtd || !prtd->checked)
++		return;
++	error = dmaengine_pcm_error(prtd, error < 0 ? error : -EIO);
++	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++	sink = prtd->error_sink;
++	sink_arg = prtd->error_sink_arg;
++	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++	/* CPU admission/ticket failure precedes the ALSA state action. */
++	if (sink)
++		sink(substream, error, sink_arg);
++	/* Synchronous trigger/pointer callers may already own the stream lock. */
++	if (stop_xrun)
++		snd_pcm_stop_xrun(substream);
++}
++
++static int dmaengine_pcm_check_fault(struct snd_pcm_substream *substream)
++{
++	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
++	int error;
++
++	if (!prtd || !prtd->checked)
++		return 0;
++	/* This accessor is cached, IRQ-safe and does not acquire PM or perform I/O. */
++	error = dmaengine_check_open(prtd->dma_chan);
++	if (error < 0) {
++		dmaengine_pcm_notify_fault(substream, error, false);
++		return dmaengine_pcm_error(prtd, error);
++	}
++	return dmaengine_pcm_error(prtd, 0);
++}
++
++static void dmaengine_pcm_dma_complete_result(void *arg,
++					    const struct dmaengine_result *result)
++{
++	struct snd_pcm_substream *substream = arg;
++	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
++	int error;
++
++	if (!prtd || !prtd->checked)
++		return;
++	error = dmaengine_check_open(prtd->dma_chan);
++	if (error < 0 || (result && result->result != DMA_TRANS_NOERROR)) {
++		/* Preserve exact controller errno before the result-only -EIO fallback. */
++		dmaengine_pcm_notify_fault(substream, error < 0 ? error : -EIO, true);
++		return;
++	}
++	if (dmaengine_pcm_error(prtd, 0))
++		return;
++	dmaengine_pcm_dma_complete(arg);
++}
++
++int snd_dmaengine_pcm_set_error_sink(struct snd_pcm_substream *substream,
++		void (*sink)(struct snd_pcm_substream *, int, void *), void *arg)
++{
++	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
++	unsigned long flags;
++	int ret = 0;
++
++	if (!prtd || !prtd->checked)
++		return sink ? -EOPNOTSUPP : 0;
++	spin_lock_irqsave(&prtd->lifecycle_lock, flags);
++	if (prtd->exposed || prtd->closing || prtd->quiescing || prtd->error_sink)
++		ret = -EBUSY;
++	else {
++		prtd->error_sink = sink;
++		prtd->error_sink_arg = arg;
++	}
++	spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_set_error_sink);
++
+ static int dmaengine_pcm_prepare_and_submit(struct snd_pcm_substream *substream)
+ {
+ 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+@@ -279,6 +370,9 @@
+ 	int ret;
+ 
+ 	prtd->cookie = 0;
++	ret = dmaengine_pcm_check_fault(substream);
++	if (ret)
++		return ret;
+ 	if (prtd->checked) {
+ 		ret = snd_pcm_dma_quarantine_check(substream, chan->device->dev);
+ 		if (ret)
+@@ -295,15 +389,23 @@
+ 		snd_pcm_lib_buffer_bytes(substream),
+ 		snd_pcm_lib_period_bytes(substream), direction, flags);
+ 
+-	if (!desc)
+-		return -ENOMEM;
+-
+-	desc->callback = dmaengine_pcm_dma_complete;
++	if (!desc) {
++		ret = dmaengine_pcm_check_fault(substream);
++		return ret ? ret : -ENOMEM;
++	}
++
++	if (prtd->checked)
++		desc->callback_result = dmaengine_pcm_dma_complete_result;
++	else
++		desc->callback = dmaengine_pcm_dma_complete;
+ 	desc->callback_param = substream;
+ 	prtd->cookie = dmaengine_submit(desc);
+ 	ret = dma_submit_error(prtd->cookie);
+-	if (ret)
+-		return ret;
++	if (ret) {
++		int exact = dmaengine_pcm_check_fault(substream);
++
++		return exact ? exact : ret;
++	}
+ 	if (prtd->checked) {
+ 		spin_lock_irqsave(&prtd->lifecycle_lock, irqflags);
+ 		prtd->owner_buffer = substream->runtime->dma_buffer_p;
+@@ -346,6 +448,11 @@
+ 	}
+ 	stopping = cmd == SNDRV_PCM_TRIGGER_STOP ||
+ 		(cmd == SNDRV_PCM_TRIGGER_SUSPEND && !(runtime->info & SNDRV_PCM_INFO_PAUSE));
++	if (!stopping) {
++		ret = dmaengine_pcm_check_fault(substream);
++		if (ret)
++			return ret;
++	}
+ 	ret = dmaengine_pcm_operation_begin(prtd, cmd, stopping);
+ 	if (ret)
+ 		return ret;
+@@ -354,13 +461,22 @@
+ 		ret = dmaengine_pcm_prepare_and_submit(substream);
+ 		if (ret)
+ 			break;
++		ret = dmaengine_pcm_check_fault(substream);
++		if (ret)
++			break;
+ 		dma_async_issue_pending(prtd->dma_chan);
++		ret = dmaengine_pcm_check_fault(substream);
++		if (ret)
++			break;
+ 		if (prtd->checked && dmaengine_tx_status(prtd->dma_chan, prtd->cookie, NULL) == DMA_ERROR) {
+ 			spin_lock_irqsave(&prtd->lifecycle_lock, flags);
+ 			prtd->go_failed = true;
+ 			spin_unlock_irqrestore(&prtd->lifecycle_lock, flags);
++			ret = dmaengine_pcm_check_fault(substream);
++			if (!ret)
++				dmaengine_pcm_notify_fault(substream, -EIO, false);
+ 			dmaengine_pcm_operation_end(prtd);
+-			return -EIO;
++			return dmaengine_pcm_error(prtd, ret ? ret : -EIO);
+ 		}
+ 		break;
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+@@ -405,6 +521,8 @@
+ snd_pcm_uframes_t snd_dmaengine_pcm_pointer_no_residue(struct snd_pcm_substream *substream)
+ {
+ 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
++	if (dmaengine_pcm_check_fault(substream))
++		return SNDRV_PCM_POS_XRUN;
+ 	return bytes_to_frames(substream->runtime, prtd->pos);
+ }
+ EXPORT_SYMBOL_GPL(snd_dmaengine_pcm_pointer_no_residue);
+@@ -424,7 +542,13 @@
+ 	unsigned int buf_size;
+ 	unsigned int pos = 0;
+ 
+-	dmaengine_tx_status(prtd->dma_chan, prtd->cookie, &state);
++	if (dmaengine_pcm_check_fault(substream))
++		return SNDRV_PCM_POS_XRUN;
++	if (dmaengine_tx_status(prtd->dma_chan, prtd->cookie, &state) == DMA_ERROR && prtd->checked) {
++		if (!dmaengine_pcm_check_fault(substream))
++			dmaengine_pcm_notify_fault(substream, -EIO, false);
++		return SNDRV_PCM_POS_XRUN;
++	}
+ 	buf_size = snd_pcm_lib_buffer_bytes(substream);
+ 	if (state.residue > 0 && state.residue <= buf_size)
+ 		pos = buf_size - state.residue;
+--- a/sound/soc/codecs/rk817_codec.c
++++ b/sound/soc/codecs/rk817_codec.c
+@@ -68,6 +68,19 @@
+ 	struct rk808 *rk817;
+ 	struct clk *mclk;
+ 	struct mutex clk_lock;
++	struct mutex params_lock;
++	struct snd_soc_dai_params_state shared_params;
++	struct snd_pcm_substream *shared_open[2];
++	bool shared_params_enabled;
++	unsigned int shared_dai_fmt;
++	int params_error;
++	/* Actual MCLK references retained after an uncertain checked path write. */
++	bool retained_clock[2];
++	bool shutdown_started;
++	bool terminal_started;
++	bool terminal_done;
++	bool probe_clock_owned;
++	bool clk_lock_initialized;
+ 
+ 	unsigned int clk_capture;
+ 	unsigned int clk_playback;
+@@ -695,15 +708,474 @@
+ 	return 0;
+ }
+ 
++/* Used only by the checked helpers below; every operation preserves errno. */
++#define RK817_SHARED_TRY(call) do { \
++	ret = (call); \
++	if (ret < 0) \
++		return ret; \
++} while (0)
++
++
++static int rk817_shared_power_up(struct snd_soc_component *component, int type)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++	int i, ret;
++
++	DBG("%s : power up %s %s %s\n", __func__,
++	    type & RK817_CODEC_PLAYBACK ? "playback" : "",
++	    type & RK817_CODEC_CAPTURE ? "capture" : "",
++	    type & RK817_CODEC_INCALL ? "incall" : "");
++
++	if (type & RK817_CODEC_PLAYBACK) {
++		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++					      RK817_CODEC_DTOP_DIGEN_CLKE,
++					      DAC_DIG_CLK_MASK, DAC_DIG_CLK_EN));
++		for (i = 0; i < RK817_CODEC_PLAYBACK_POWER_UP_LIST_LEN; i++) {
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						playback_power_up_list[i].reg,
++						playback_power_up_list[i].value));
++		}
++
++		/* configure APLL CFG0/4 */
++		if (rk817->chip_ver <= 0x4) {
++			DBG("%s (%d): 0x4 and previous versions\n",
++			    __func__, __LINE__);
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c));
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95));
++		} else {
++			DBG("%s: 0x4 version later\n", __func__);
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04));
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5));
++		}
++		RK817_SHARED_TRY(rk817_restart_dac_digital_clk(component));
++	}
++
++	if (type & RK817_CODEC_CAPTURE) {
++		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++					      RK817_CODEC_DTOP_DIGEN_CLKE,
++					      ADC_DIG_CLK_MASK,
++					      ADC_DIG_CLK_EN));
++		for (i = 0; i < RK817_CODEC_CAPTURE_POWER_UP_LIST_LEN; i++) {
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						capture_power_up_list[i].reg,
++						capture_power_up_list[i].value));
++		}
++
++		/* configure APLL CFG0/4 */
++		if (rk817->chip_ver <= 0x4) {
++			DBG("%s (%d): 0x4 and previous versions\n",
++			    __func__, __LINE__);
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x0c));
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0x95));
++		} else {
++			DBG("%s: 0x4 version later\n", __func__);
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG0, 0x04));
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG4, 0xa5));
++		}
++
++		RK817_SHARED_TRY(rk817_restart_adc_digital_clk(component));
++
++		if (rk817->mic_in_differential)
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_AMIC_CFG0,
++						      MIC_DIFF_MASK, MIC_DIFF_EN));
++		else
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_AMIC_CFG0,
++						      MIC_DIFF_MASK,
++						      MIC_DIFF_DIS));
++
++		if (rk817->pdmdata_out_enable)
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_DI2S_CKM,
++						      PDM_EN_MASK,
++						      PDM_EN_ENABLE));
++
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DADC_VOLL,
++					rk817->capture_volume));
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DADC_VOLR,
++					rk817->capture_volume));
++	}
++
++	return 0;
++}
++
++static int rk817_shared_power_down(struct snd_soc_component *component, int type)
++{
++	int i, ret;
++
++	DBG("%s : power down %s %s %s\n", __func__,
++	    type & RK817_CODEC_PLAYBACK ? "playback" : "",
++	    type & RK817_CODEC_CAPTURE ? "capture" : "",
++	    type & RK817_CODEC_INCALL ? "incall" : "");
++
++	/* mute output for pop noise */
++	if ((type & RK817_CODEC_PLAYBACK) ||
++	    (type & RK817_CODEC_INCALL)) {
++		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++					      RK817_CODEC_DDAC_MUTE_MIXCTL,
++					      DACMT_ENABLE, DACMT_ENABLE));
++	}
++
++	if (type & RK817_CODEC_CAPTURE) {
++		for (i = 0; i < RK817_CODEC_CAPTURE_POWER_DOWN_LIST_LEN; i++) {
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						capture_power_down_list[i].reg,
++						capture_power_down_list[i].value));
++		}
++		RK817_SHARED_TRY(snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++					      ADC_DIG_CLK_MASK, ADC_DIG_CLK_DIS));
++	}
++
++	if (type & RK817_CODEC_PLAYBACK) {
++		for (i = 0; i < RK817_CODEC_PLAYBACK_POWER_DOWN_LIST_LEN; i++) {
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						playback_power_down_list[i].reg,
++						playback_power_down_list[i].value));
++		}
++		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++					      RK817_CODEC_DTOP_DIGEN_CLKE,
++					      DAC_DIG_CLK_MASK, DAC_DIG_CLK_DIS));
++	}
++
++	if (type == RK817_CODEC_ALL) {
++		for (i = 0; i < RK817_CODEC_PLAYBACK_POWER_DOWN_LIST_LEN; i++) {
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						playback_power_down_list[i].reg,
++						playback_power_down_list[i].value));
++		}
++		for (i = 0; i < RK817_CODEC_CAPTURE_POWER_DOWN_LIST_LEN; i++) {
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						capture_power_down_list[i].reg,
++						capture_power_down_list[i].value));
++		}
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DTOP_DIGEN_CLKE, 0x00));
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_APLL_CFG5, 0x01));
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AREF_RTCFG1, 0x06));
++	}
++
++	return 0;
++}
++
++static int rk817_shared_playback_apply(struct snd_soc_component *component,
++					long pre_path, long target_path)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++	int ret;
++
++	switch (target_path) {
++	case OFF:
++		if (pre_path != OFF && (pre_path != HP_PATH &&
++			pre_path != HP_NO_MIC && pre_path != RING_HP &&
++			pre_path != RING_HP_NO_MIC)) {
++			RK817_SHARED_TRY(rk817_shared_power_down(component, RK817_CODEC_PLAYBACK));
++			if (rk817->capture_path == 0)
++				RK817_SHARED_TRY(rk817_shared_power_down(component, RK817_CODEC_ALL));
++		}
++		break;
++	case RCV:
++	case SPK_PATH:
++	case RING_SPK:
++		if (pre_path == OFF)
++			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_PLAYBACK));
++		if (rk817->out_l2spk_r2hp) {
++			/* for costdown: ldac -> ClassD rdac -> Hp */
++			/* HP_CP_EN , CP 2.3V */
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CP,
++						0x11));
++			/* power on HP two stage opamp ,HP amplitude 0db */
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CFG0,
++						0x80));
++			/* power on dac ibias/l/r */
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++						PWD_DACBIAS_ON | PWD_DACD_ON |
++						PWD_DACL_ON | PWD_DACR_ON));
++			/* CLASS D mode */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DDAC_MUTE_MIXCTL,
++						0x18));
++			/* CLASS D enable */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_ACLASSD_CFG1,
++						0xa5));
++			/* restart CLASS D, OCPP/N */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_ACLASSD_CFG2,
++						0xf7));
++		} else if (!rk817->use_ext_amplifier) {
++			/* power on dac ibias/l/r */
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++						PWD_DACBIAS_ON | PWD_DACD_ON |
++						PWD_DACL_DOWN | PWD_DACR_DOWN));
++			/* CLASS D mode */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DDAC_MUTE_MIXCTL,
++						0x10));
++			/* CLASS D enable */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_ACLASSD_CFG1,
++						0xa5));
++			/* restart CLASS D, OCPP/N */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_ACLASSD_CFG2,
++						0xf7));
++		} else {
++			/* HP_CP_EN , CP 2.3V */
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CP,
++						0x11));
++			/* power on HP two stage opamp ,HP amplitude 0db */
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CFG0,
++						0x80));
++			/* power on dac ibias/l/r */
++			RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++						PWD_DACBIAS_ON | PWD_DACD_DOWN |
++						PWD_DACL_ON | PWD_DACR_ON));
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_DDAC_MUTE_MIXCTL,
++						      DACMT_ENABLE, DACMT_DISABLE));
++		}
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLL,
++					rk817->spk_volume));
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLR,
++					rk817->spk_volume));
++		break;
++	case HP_PATH:
++	case HP_NO_MIC:
++	case RING_HP:
++	case RING_HP_NO_MIC:
++		if (pre_path == OFF)
++			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_PLAYBACK));
++		/* HP_CP_EN , CP 2.3V */
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CP, 0x11));
++		/* power on HP two stage opamp ,HP amplitude 0db */
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CFG0, 0x80));
++		/* power on dac ibias/l/r */
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++					PWD_DACBIAS_ON | PWD_DACD_DOWN |
++					PWD_DACL_ON | PWD_DACR_ON));
++		RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++					      RK817_CODEC_DDAC_MUTE_MIXCTL,
++					      DACMT_ENABLE, DACMT_DISABLE));
++
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLL,
++					rk817->hp_volume));
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLR,
++					rk817->hp_volume));
++		break;
++	case BT:
++		break;
++	case SPK_HP:
++	case RING_SPK_HP:
++		if (pre_path == OFF)
++			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_PLAYBACK));
++
++		/* HP_CP_EN , CP 2.3V  */
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CP, 0x11));
++		/* power on HP two stage opamp ,HP amplitude 0db */
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_AHP_CFG0, 0x80));
++
++		/* power on dac ibias/l/r */
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_ADAC_CFG1,
++					PWD_DACBIAS_ON | PWD_DACD_ON |
++					PWD_DACL_ON | PWD_DACR_ON));
++
++		if (!rk817->use_ext_amplifier) {
++			/* CLASS D mode */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DDAC_MUTE_MIXCTL,
++						0x10));
++			/* CLASS D enable */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_ACLASSD_CFG1,
++						0xa5));
++			/* restart CLASS D, OCPP/N */
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_ACLASSD_CFG2,
++						0xf7));
++		}
++
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLL,
++					rk817->hp_volume));
++		RK817_SHARED_TRY(snd_soc_component_write(component, RK817_CODEC_DDAC_VOLR,
++					rk817->hp_volume));
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int rk817_shared_capture_apply(struct snd_soc_component *component,
++					long pre_path, long target_path)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++	int ret;
++
++	switch (target_path) {
++	case MIC_OFF:
++		if (pre_path != MIC_OFF) {
++			RK817_SHARED_TRY(rk817_shared_power_down(component, RK817_CODEC_CAPTURE));
++			if (rk817->playback_path == OFF)
++				RK817_SHARED_TRY(rk817_shared_power_down(component, RK817_CODEC_ALL));
++		}
++		break;
++	case MAIN_MIC:
++		if (pre_path == MIC_OFF)
++			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_CAPTURE));
++
++		if (rk817->adc_for_loopback) {
++			/* don't need to gain when adc use for loopback */
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_AMIC_CFG0,
++						      0xf,
++						      0x0));
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DMIC_PGA_GAIN,
++						0x66));
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DADC_VOLL,
++						0x00));
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DADC_VOLR,
++						0x00));
++			break;
++		}
++		if (!rk817->mic_in_differential) {
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DADC_VOLR,
++						0xff));
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_AADC_CFG0,
++						      ADC_R_PWD_MASK,
++						      ADC_R_PWD_EN));
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_AMIC_CFG0,
++						      PWD_PGA_R_MASK,
++						      PWD_PGA_R_EN));
++		}
++		break;
++	case HANDS_FREE_MIC:
++		if (pre_path == MIC_OFF)
++			RK817_SHARED_TRY(rk817_shared_power_up(component, RK817_CODEC_CAPTURE));
++
++		if (rk817->adc_for_loopback) {
++			/* don't need to gain when adc use for loopback */
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_AMIC_CFG0,
++						      0xf,
++						      0x0));
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DMIC_PGA_GAIN,
++						0x66));
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DADC_VOLL,
++						0x00));
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DADC_VOLR,
++						0x00));
++			break;
++		}
++		if (!rk817->mic_in_differential) {
++			RK817_SHARED_TRY(snd_soc_component_write(component,
++						RK817_CODEC_DADC_VOLL,
++						0xff));
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_AADC_CFG0,
++						      ADC_L_PWD_MASK,
++						      ADC_L_PWD_EN));
++			RK817_SHARED_TRY(snd_soc_component_update_bits(component,
++						      RK817_CODEC_AMIC_CFG0,
++						      PWD_PGA_L_MASK,
++						      PWD_PGA_L_EN));
++		}
++		break;
++	case BT_SCO_MIC:
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++#undef RK817_SHARED_TRY
++
++/* Caller owns params_lock; successful path state is published after all I/O. */
++static int rk817_shared_path_config(struct snd_soc_component *component,
++				   int stream, long target_path)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	long *path = stream ? &rk817->capture_path : &rk817->playback_path;
++	unsigned int *lease = stream ? &rk817->clk_capture : &rk817->clk_playback;
++	bool new_clock = false;
++	int ret;
++
++	if (rk817->terminal_started)
++		return -ESHUTDOWN;
++
++	if (target_path < 0 || target_path > (stream ? BT_SCO_MIC : RING_SPK_HP))
++		return -EINVAL;
++	/* A same-value observation is not a recovery or an I/O operation. */
++	if (*path == target_path)
++		return 0;
++	if (p->pending || p->owner[0] || p->owner[1])
++		return -EBUSY;
++	if (rk817->params_error)
++		return rk817->params_error;
++
++	if (target_path && !*lease) {
++		mutex_lock(&rk817->clk_lock);
++		ret = clk_prepare_enable(rk817->mclk);
++		mutex_unlock(&rk817->clk_lock);
++		if (ret < 0)
++			return ret;
++		new_clock = true;
++	}
++	if (stream)
++		ret = rk817_shared_capture_apply(component, *path, target_path);
++	else
++		ret = rk817_shared_playback_apply(component, *path, target_path);
++	if (ret < 0) {
++		/* A partial codec write does not establish a reversible physical state. */
++		if (new_clock)
++			rk817->retained_clock[stream] = true;
++		if (!rk817->params_error)
++			rk817->params_error = ret;
++		return ret;
++	}
++
++	mutex_lock(&rk817->clk_lock);
++	if (!target_path && *lease)
++		clk_disable_unprepare(rk817->mclk);
++	*lease = target_path ? 1 : 0;
++	*path = target_path;
++	mutex_unlock(&rk817->clk_lock);
++	return 0;
++}
++
+ static int rk817_playback_path_get(struct snd_kcontrol *kcontrol,
+ 				   struct snd_ctl_elem_value *ucontrol)
+ {
+ 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+ 
++	if (rk817->shared_params_enabled) {
++		mutex_lock(&rk817->params_lock);
++		if (rk817->terminal_started) {
++			mutex_unlock(&rk817->params_lock);
++			return -ESHUTDOWN;
++		}
++	}
++
++
+ 	DBG("%s : playback_path %ld\n", __func__, rk817->playback_path);
+ 
+ 	ucontrol->value.integer.value[0] = rk817->playback_path;
++
++	if (rk817->shared_params_enabled)
++		mutex_unlock(&rk817->params_lock);
+ 
+ 	return 0;
+ }
+@@ -713,6 +1185,16 @@
+ {
+ 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++
++	if (rk817->shared_params_enabled) {
++		long value = ucontrol->value.integer.value[0];
++		int ret;
++
++		mutex_lock(&rk817->params_lock);
++		ret = rk817_shared_path_config(component, 0, value);
++		mutex_unlock(&rk817->params_lock);
++		return ret;
++	}
+ 
+ 	if (rk817->playback_path == ucontrol->value.integer.value[0]) {
+ 		DBG("%s : playback_path is not changed!\n",
+@@ -841,11 +1323,23 @@
+ 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+ 
++	if (rk817->shared_params_enabled) {
++		mutex_lock(&rk817->params_lock);
++		if (rk817->terminal_started) {
++			mutex_unlock(&rk817->params_lock);
++			return -ESHUTDOWN;
++		}
++	}
++
++
+ 	DBG("%s : capture_path %ld\n", __func__,
+ 	    rk817->capture_path);
+ 
+ 	ucontrol->value.integer.value[0] = rk817->capture_path;
+ 
++	if (rk817->shared_params_enabled)
++		mutex_unlock(&rk817->params_lock);
++
+ 	return 0;
+ }
+ 
+@@ -854,6 +1348,16 @@
+ {
+ 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++
++	if (rk817->shared_params_enabled) {
++		long value = ucontrol->value.integer.value[0];
++		int ret;
++
++		mutex_lock(&rk817->params_lock);
++		ret = rk817_shared_path_config(component, 1, value);
++		mutex_unlock(&rk817->params_lock);
++		return ret;
++	}
+ 
+ 	if (rk817->capture_path == ucontrol->value.integer.value[0]) {
+ 		DBG("%s : capture_path is not changed!\n",
+@@ -871,9 +1375,21 @@
+ 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+ 
++	if (rk817->shared_params_enabled) {
++		mutex_lock(&rk817->params_lock);
++		if (rk817->terminal_started) {
++			mutex_unlock(&rk817->params_lock);
++			return -ESHUTDOWN;
++		}
++	}
++
++
+ 	DBG("%s : resume_path %d\n", __func__, rk817->resume_path);
+ 
+ 	ucontrol->value.integer.value[0] = rk817->resume_path;
++
++	if (rk817->shared_params_enabled)
++		mutex_unlock(&rk817->params_lock);
+ 
+ 	return 0;
+ }
+@@ -883,6 +1399,30 @@
+ {
+ 	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++
++	if (rk817->shared_params_enabled) {
++		long value = ucontrol->value.integer.value[0];
++		int ret;
++
++		mutex_lock(&rk817->params_lock);
++		if (rk817->terminal_started)
++			ret = -ESHUTDOWN;
++		else if (value < 0 || value > 1)
++			ret = -EINVAL;
++		else if (rk817->resume_path == value)
++			ret = 0;
++		else if (rk817->shared_params.pending || rk817->shared_params.owner[0] ||
++			 rk817->shared_params.owner[1])
++			ret = -EBUSY;
++		else if (rk817->params_error)
++			ret = rk817->params_error;
++		else {
++			rk817->resume_path = value;
++			ret = 0;
++		}
++		mutex_unlock(&rk817->params_lock);
++		return ret;
++	}
+ 
+ 	rk817->resume_path = ucontrol->value.integer.value[0];
+ 
+@@ -1236,6 +1776,363 @@
+ 	.shutdown	= rk817_codec_shutdown,
+ };
+ 
++static int rk817_shared_startup(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	int ret;
++
++	if (!rk817->shared_params_enabled || dai->id != RK817_HIFI ||
++	    (ss->stream != 0 && ss->stream != 1))
++		return -EINVAL;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->shutdown_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	ret = rk817->params_error;
++	if (!ret && (rk817->shared_params.pending || rk817->shared_open[ss->stream]))
++		ret = -EBUSY;
++	if (!ret)
++		rk817->shared_open[ss->stream] = ss;
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static int rk817_shared_begin(struct snd_pcm_substream *ss,
++		struct snd_pcm_hw_params *params, struct snd_soc_dai *dai, u64 *cookie)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	int ret;
++
++	if (!rk817->shared_params_enabled || dai->id != RK817_HIFI ||
++	    (ss->stream != 0 && ss->stream != 1) || params_rate(params) != 48000 ||
++	    params_channels(params) != 2 || params_format(params) != SNDRV_PCM_FORMAT_S16_LE ||
++	    rk817->pdmdata_out_enable || rk817->adc_for_loopback)
++		return -EINVAL;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	ret = rk817->params_error;
++	if (!ret && (rk817->shared_open[ss->stream] != ss ||
++	    rk817->shared_dai_fmt != (SND_SOC_DAIFMT_CBS_CFS |
++		SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S)))
++		ret = -EINVAL;
++	if (!ret)
++		ret = snd_soc_dai_params_begin_locked(p, dai, ss, cookie);
++	if (!ret)
++		p->old_clock[0] = rk817->stereo_sysclk;
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static int rk817_shared_reuse(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	int ret;
++
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	ret = rk817->shared_params.pending == ss ? rk817->shared_params.reuse : -EINVAL;
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static void rk817_shared_abort(struct snd_pcm_substream *ss, struct snd_soc_dai *dai,
++			       u64 cookie, int first_error, bool shared_io_possible)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return;
++	}
++	if (snd_soc_dai_params_abort_locked(p, dai, ss, cookie)) {
++		rk817->stereo_sysclk = p->old_clock[0];
++		if (shared_io_possible && !rk817->params_error)
++			rk817->params_error = first_error < 0 ? first_error : -EIO;
++	}
++	mutex_unlock(&rk817->params_lock);
++}
++
++static int rk817_shared_commit(struct snd_pcm_substream *ss,
++				struct snd_soc_dai *dai, u64 cookie)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	int ret;
++
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	if (!cookie || p->cookie != cookie || p->pending != ss ||
++	    p->transaction != ss || !p->undo) {
++		mutex_unlock(&rk817->params_lock);
++		return -EINVAL; /* Duplicate/stale commit cannot undo a committed owner. */
++	}
++	ret = rk817->params_error;
++	if (!ret)
++		ret = snd_soc_dai_params_commit_locked(p, dai, ss, cookie);
++	if (!ret)
++		rk817->stereo_sysclk = 12288000;
++	else if (snd_soc_dai_params_abort_locked(p, dai, ss, cookie))
++		rk817->stereo_sysclk = p->old_clock[0];
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static void rk817_shared_fault(struct snd_soc_dai *dai, int first_errno)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return;
++	}
++	if (!rk817->params_error)
++		rk817->params_error = first_errno < 0 ? first_errno : -EIO;
++	mutex_unlock(&rk817->params_lock);
++}
++
++static int rk817_shared_free_check(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	int ret = 0;
++
++	if (dai->id != RK817_HIFI || (ss->stream != 0 && ss->stream != 1))
++		return -EINVAL;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	if (p->pending)
++		ret = -EBUSY;
++	else if ((p->owner[ss->stream] && p->owner[ss->stream] != ss) ||
++		 rk817->shared_open[ss->stream] != ss)
++		ret = -EINVAL;
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static int rk817_shared_free(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	int ret;
++
++	if (dai->id != RK817_HIFI)
++		return -EINVAL;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	ret = snd_soc_dai_params_free_locked(&rk817->shared_params, dai, ss);
++	/* Keep sticky params_error and the separately owned MCLK lease/request. */
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static int rk817_shared_sysclk(struct snd_soc_dai *dai, int clk_id,
++				unsigned int freq, int dir)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	int ret = 0;
++
++	if (dai->id != RK817_HIFI || clk_id != 0 ||
++	    (dir != SND_SOC_CLOCK_IN && dir != SND_SOC_CLOCK_OUT) ||
++	    (!freq && dir != SND_SOC_CLOCK_IN))
++		return -EINVAL;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	if (rk817->params_error)
++		ret = rk817->params_error;
++	else if (p->pending || p->owner[0] || p->owner[1])
++		/* Value validation only; this setter has no owner identity parameter. */
++		ret = freq == 12288000 ? 0 : -EINVAL;
++	else if (freq)
++		ret = freq == 12288000 ? 0 : -EINVAL;
++	else if (snd_soc_dai_active(dai))
++		ret = -EINVAL;
++	else
++		rk817->stereo_sysclk = 0;
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static int rk817_shared_hw_params(struct snd_pcm_substream *ss,
++		struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	int ret;
++
++	if (dai->id != RK817_HIFI || (ss->stream != 0 && ss->stream != 1) ||
++	    params_rate(params) != 48000 || params_channels(params) != 2 ||
++	    params_format(params) != SNDRV_PCM_FORMAT_S16_LE)
++		return -EINVAL;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	ret = rk817->params_error;
++	if (!ret && (p->pending != ss || !p->undo || p->applied))
++		ret = -EBUSY;
++	if (!ret) {
++		p->applied = true;
++		/* Whole real RK817 PLL/width/rate function only for first configuration. */
++		if (!p->reuse)
++			ret = rk817_hw_params(ss, params, dai);
++	}
++	if (ret < 0 && p->pending == ss && p->applied && !p->reuse && !rk817->params_error)
++		rk817->params_error = ret;
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static int rk817_shared_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	int ret;
++
++	if (dai->id != RK817_HIFI ||
++	    fmt != (SND_SOC_DAIFMT_CBS_CFS | SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S))
++		return -EINVAL;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	ret = rk817->params_error;
++	if (!ret && rk817->shared_dai_fmt == fmt)
++		ret = 0;
++	else if (!ret && (p->pending || p->owner[0] || p->owner[1]))
++		ret = -EBUSY;
++	else if (!ret) {
++		ret = rk817_set_dai_fmt(dai, fmt);
++		if (!ret)
++			rk817->shared_dai_fmt = fmt;
++		else if (!rk817->params_error)
++			rk817->params_error = ret;
++	}
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++/* mute_stream has no substream argument; use the independently held open slot. */
++static int rk817_shared_mute(struct snd_soc_dai *dai, int mute, int stream)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	int ret;
++
++	if (dai->id != RK817_HIFI || (stream != 0 && stream != 1))
++		return -EINVAL;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	if (!rk817->shared_open[stream])
++		ret = -EINVAL;
++	else if (p->pending)
++		ret = -EBUSY;
++	else if (!mute && (rk817->params_error || rk817->mute_io_error))
++		ret = rk817->params_error ? rk817->params_error : rk817->mute_io_error;
++	else if (!mute && p->owner[stream] != rk817->shared_open[stream])
++		ret = -EINVAL;
++	else {
++		/* Post-HW_FREE mute still owns the open, even after its params owner left. */
++		ret = rk817_digital_mute(dai, mute, stream);
++		if (ret < 0 && !rk817->params_error)
++			rk817->params_error = ret;
++	}
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static int rk817_shared_capture_shutdown(struct snd_soc_component *component)
++{
++	int first, ret;
++
++	first = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++					      I2STX_CKE_EN, I2STX_CKE_EN);
++	usleep_range(1000, 1100);
++	/* Try to clear this direction's bit even if the first update failed. */
++	ret = snd_soc_component_update_bits(component, RK817_CODEC_DTOP_DIGEN_CLKE,
++					    I2STX_CKE_EN, I2STX_CKE_DIS);
++	return first < 0 ? first : (ret < 0 ? ret : 0);
++}
++
++static void rk817_shared_shutdown(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(dai->component);
++	int ret;
++
++	if (dai->id != RK817_HIFI || (ss->stream != 0 && ss->stream != 1))
++		return;
++	mutex_lock(&rk817->params_lock);
++	if (rk817->terminal_started) {
++		mutex_unlock(&rk817->params_lock);
++		return;
++	}
++	if (rk817->shared_open[ss->stream] != ss)
++		goto out; /* Failed startup or a repeated close owns no open slot. */
++	ret = snd_soc_dai_params_free_locked(&rk817->shared_params, dai, ss);
++	if (ret < 0) {
++		if (!rk817->params_error)
++			rk817->params_error = ret;
++		goto out;
++	}
++	if (ss->stream == SNDRV_PCM_STREAM_CAPTURE) {
++		/* Masked ADC output pulse does not alter a peer's DAC/PLL/rate bits. */
++		ret = rk817_shared_capture_shutdown(dai->component);
++		if (ret < 0 && !rk817->params_error)
++			rk817->params_error = ret;
++	}
++	rk817->shared_open[ss->stream] = NULL;
++out:
++	/* This void callback records first errno but cannot return it to close(). */
++	mutex_unlock(&rk817->params_lock);
++}
++
++static const struct snd_soc_dai_ops rk817_shared_dai_ops = {
++	.startup = rk817_shared_startup,
++	.hw_params = rk817_shared_hw_params,
++	.hw_free = rk817_shared_free,
++	.set_fmt = rk817_shared_set_fmt,
++	.set_sysclk = rk817_shared_sysclk,
++	.mute_stream = rk817_shared_mute,
++	.shutdown = rk817_shared_shutdown,
++	.hw_params_begin = rk817_shared_begin,
++	.hw_params_commit = rk817_shared_commit,
++	.hw_params_abort = rk817_shared_abort,
++	.hw_params_reuse = rk817_shared_reuse,
++	.hw_params_free_check = rk817_shared_free_check,
++	.hw_params_fault = rk817_shared_fault,
++};
++
+ static struct snd_soc_dai_driver rk817_dai[] = {
+ 	{
+ 		.name = "rk817-hifi",
+@@ -1280,6 +2177,16 @@
+ 
+ static int rk817_suspend(struct snd_soc_component *component)
+ {
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++
++	if (rk817->shared_params_enabled) {
++		int ret;
++
++		mutex_lock(&rk817->params_lock);
++		ret = rk817->terminal_started ? -ESHUTDOWN : -EOPNOTSUPP;
++		mutex_unlock(&rk817->params_lock);
++		return ret;
++	}
+ 	rk817_codec_power_down(component, RK817_CODEC_ALL);
+ 	return 0;
+ }
+@@ -1287,6 +2194,15 @@
+ static int rk817_resume(struct snd_soc_component *component)
+ {
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++
++	if (rk817->shared_params_enabled) {
++		int ret;
++
++		mutex_lock(&rk817->params_lock);
++		ret = rk817->terminal_started ? -ESHUTDOWN : -EOPNOTSUPP;
++		mutex_unlock(&rk817->params_lock);
++		return ret;
++	}
+ 
+ 	if (rk817->resume_path) {
+ 		if (rk817->capture_path != MIC_OFF)
+@@ -1298,6 +2214,164 @@
+ 	return 0;
+ }
+ 
++/* A void teardown callback cannot stop devres release by returning errno. */
++static void rk817_shared_failstop(const char *operation, int first_errno)
++{
++	WRITE_ONCE(panic_timeout, 0);
++	panic("rk817-codec: %s unsafe codec destruction (%d)", operation, first_errno);
++}
++
++/* Called after ASoC file drain, or with no bound card/component borrow.
++ * params_lock then drains local checked bodies before terminal I/O/lease release.
++ */
++static void rk817_shared_quiesce(struct rk817_codec_priv *rk817, const char *operation)
++{
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	int ret = 0;
++
++	mutex_lock(&rk817->params_lock);
++	rk817->terminal_started = true;
++	if (rk817->terminal_done)
++		goto out;
++	if (rk817->params_error)
++		ret = rk817->params_error;
++	else if (rk817->mute_io_error)
++		ret = rk817->mute_io_error;
++	else if (p->pending || p->owner[0] || p->owner[1] ||
++		 rk817->shared_open[0] || rk817->shared_open[1])
++		ret = -EBUSY;
++	else if (rk817->retained_clock[0] || rk817->retained_clock[1] ||
++		 rk817->clk_playback > 1 || rk817->clk_capture > 1 ||
++		 (rk817->component && (!rk817->probe_clock_owned || !rk817->clk_lock_initialized)) ||
++		 (!rk817->component && (rk817->probe_clock_owned || rk817->clk_playback || rk817->clk_capture)))
++		ret = -EIO;
++	if (ret < 0) {
++		if (!rk817->params_error)
++			rk817->params_error = ret;
++		rk817_shared_failstop(operation, rk817->params_error);
++	}
++	if (!rk817->component) {
++		rk817->terminal_done = true; /* An unprobed instance owns no codec/clock borrow. */
++		goto out;
++	}
++	ret = rk817_shared_power_down(rk817->component, RK817_CODEC_ALL);
++	if (ret < 0) {
++		rk817->params_error = ret;
++		rk817_shared_failstop(operation, ret);
++	}
++	mutex_lock(&rk817->clk_lock);
++	if (rk817->clk_playback)
++		clk_disable_unprepare(rk817->mclk);
++	if (rk817->clk_capture)
++		clk_disable_unprepare(rk817->mclk);
++	if (rk817->probe_clock_owned)
++		clk_disable_unprepare(rk817->mclk);
++	rk817->clk_playback = 0;
++	rk817->clk_capture = 0;
++	rk817->probe_clock_owned = false;
++	rk817->playback_path = OFF;
++	rk817->capture_path = MIC_OFF;
++	mutex_unlock(&rk817->clk_lock);
++	rk817->terminal_done = true;
++out:
++	mutex_unlock(&rk817->params_lock);
++}
++
++/* This check is not a PCM drain: release remains allowed until core disconnect. */
++static int rk817_shared_terminal_check(struct rk817_codec_priv *rk817, bool shutdown)
++{
++	int ret = 0;
++
++	mutex_lock(&rk817->params_lock);
++	if (rk817->params_error)
++		ret = rk817->params_error;
++	else if (rk817->mute_io_error)
++		ret = rk817->mute_io_error;
++	else if (rk817->retained_clock[0] || rk817->retained_clock[1] ||
++		 rk817->clk_playback > 1 || rk817->clk_capture > 1)
++		ret = -EIO;
++	if (ret < 0 && !rk817->params_error)
++		rk817->params_error = ret;
++	if (!ret && shutdown)
++		rk817->shutdown_started = true;
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
++static int rk817_shared_probe(struct snd_soc_component *component)
++{
++	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
++	struct snd_soc_dai_params_state *p = &rk817->shared_params;
++	unsigned int chip_name, chip_ver;
++	int ret, cleanup;
++
++	mutex_lock(&rk817->params_lock);
++	if (rk817->shutdown_started) {
++		mutex_unlock(&rk817->params_lock);
++		return -ESHUTDOWN;
++	}
++	if (rk817->params_error || rk817->mute_io_error || rk817->retained_clock[0] ||
++	    rk817->retained_clock[1] || p->pending || p->owner[0] || p->owner[1] ||
++	    rk817->shared_open[0] || rk817->shared_open[1]) {
++		ret = rk817->params_error ? rk817->params_error : -EBUSY;
++		goto out;
++	}
++	if (rk817->component || rk817->probe_clock_owned || rk817->clk_playback ||
++	    rk817->clk_capture || rk817->clk_lock_initialized ||
++	    (rk817->terminal_started && !rk817->terminal_done)) {
++		ret = -EBUSY;
++		goto out;
++	}
++	/* Only a fully detached healthy instance can begin a new component lifetime. */
++	rk817->terminal_started = false;
++	rk817->terminal_done = false;
++	mutex_init(&rk817->clk_lock);
++	rk817->clk_lock_initialized = true;
++	snd_soc_component_init_regmap(component, rk817->regmap);
++	rk817->component = component;
++	ret = regmap_read(rk817->regmap, RK817_PMIC_CHIP_NAME, &chip_name);
++	if (ret < 0)
++		goto detach;
++	ret = regmap_read(rk817->regmap, RK817_PMIC_CHIP_VER, &chip_ver);
++	if (ret < 0)
++		goto detach;
++	rk817->chip_ver = chip_ver & 0x0f;
++	ret = clk_prepare_enable(rk817->mclk);
++	if (ret < 0)
++		goto detach;
++	rk817->probe_clock_owned = true;
++	ret = rk817_reset(component);
++	if (ret < 0) {
++		rk817->params_error = ret;
++		rk817_shared_failstop("probe reset", ret);
++	}
++	ret = snd_soc_add_component_controls(component, rk817_snd_path_controls,
++					     ARRAY_SIZE(rk817_snd_path_controls));
++	if (ret < 0) {
++		cleanup = rk817_shared_power_down(component, RK817_CODEC_ALL);
++		if (cleanup < 0) {
++			/* The controls failure remains first; cleanup cannot establish recovery. */
++			rk817->params_error = ret;
++			rk817_shared_failstop("probe controls cleanup", ret);
++		}
++		mutex_lock(&rk817->clk_lock);
++		clk_disable_unprepare(rk817->mclk);
++		rk817->probe_clock_owned = false;
++		mutex_unlock(&rk817->clk_lock);
++		goto detach;
++	}
++	ret = 0;
++	goto out;
++detach:
++	component->regmap = NULL;
++	rk817->component = NULL;
++	mutex_destroy(&rk817->clk_lock);
++	rk817->clk_lock_initialized = false;
++out:
++	mutex_unlock(&rk817->params_lock);
++	return ret;
++}
++
+ static int rk817_probe(struct snd_soc_component *component)
+ {
+ 	struct rk817_codec_priv *rk817 = snd_soc_component_get_drvdata(component);
+@@ -1307,6 +2381,8 @@
+ 
+ 	if (!rk817)
+ 		return -EINVAL;
++	if (rk817->shared_params_enabled)
++		return rk817_shared_probe(component);
+ 
+     /* The parent PMIC owns this map; the component only borrows it. */
+ 	snd_soc_component_init_regmap(component, rk817->regmap);
+@@ -1361,6 +2437,19 @@
+ 
+ 	if (!rk817) {
+ 		dev_err(component->dev, "%s : rk817 is NULL\n", __func__);
++		return;
++	}
++
++	if (rk817->shared_params_enabled) {
++		rk817_shared_quiesce(rk817, "component remove");
++		mutex_lock(&rk817->params_lock);
++		component->regmap = NULL;
++		rk817->component = NULL;
++		if (rk817->clk_lock_initialized) {
++			mutex_destroy(&rk817->clk_lock);
++			rk817->clk_lock_initialized = false;
++		}
++		mutex_unlock(&rk817->params_lock);
+ 		return;
+ 	}
+ 
+@@ -1406,6 +2495,9 @@
+ 		return -ENODEV;
+ 	}
+ 
++	rk817->shared_params_enabled = of_property_read_bool(node,
++						  "rockchip,checked-shared-params-48k");
++
+ 	rk817->hp_ctl_gpio = devm_gpiod_get_optional(dev, "hp-ctl",
+ 						  GPIOD_OUT_LOW);
+ 	if (IS_ERR(rk817->hp_ctl_gpio)) {
+@@ -1498,6 +2590,7 @@
+ {
+ 	struct rk808 *rk817 = dev_get_drvdata(pdev->dev.parent);
+ 	struct rk817_codec_priv *rk817_codec_data;
++	struct snd_soc_dai_driver *dais = rk817_dai;
+ 	int ret;
+ 
+ 	DBG("%s\n", __func__);
+@@ -1513,6 +2606,7 @@
+ 	if (!rk817_codec_data)
+ 		return -ENOMEM;
+ 
++	mutex_init(&rk817_codec_data->params_lock);
+ 	platform_set_drvdata(pdev, rk817_codec_data);
+ 
+ 	ret = rk817_codec_parse_dt_property(&pdev->dev, rk817_codec_data);
+@@ -1540,8 +2634,18 @@
+         goto err_;
+     }
+ 
++	if (rk817_codec_data->shared_params_enabled) {
++		dais = devm_kmemdup(&pdev->dev, rk817_dai, sizeof(rk817_dai), GFP_KERNEL);
++		if (!dais) {
++			ret = -ENOMEM;
++			goto err_;
++		}
++		/* Hifi and voice share the state; checked voice entrypoints reject id. */
++		dais[0].ops = &rk817_shared_dai_ops;
++		dais[1].ops = &rk817_shared_dai_ops;
++	}
+ 	ret = devm_snd_soc_register_component(&pdev->dev, &soc_codec_dev_rk817,
+-					      rk817_dai, ARRAY_SIZE(rk817_dai));
++					      dais, ARRAY_SIZE(rk817_dai));
+ 	if (ret < 0) {
+ 		dev_err(&pdev->dev, "%s() register codec error %d\n",
+ 			__func__, ret);
+@@ -1556,16 +2660,42 @@
+ 
+ static int rk817_platform_remove(struct platform_device *pdev)
+ {
++	struct rk817_codec_priv *rk817 = dev_get_drvdata(&pdev->dev);
++	int ret;
++
++	if (rk817 && rk817->shared_params_enabled) {
++		ret = rk817_shared_terminal_check(rk817, false);
++		if (ret < 0)
++			rk817_shared_failstop("platform remove", ret);
++	}
++	/* Actual core cleanup disconnects/drains files before component.remove. */
+ 	snd_soc_unregister_component(&pdev->dev);
+-
+ 	return 0;
+ }
+ 
+ static void rk817_platform_shutdown(struct platform_device *pdev)
+ {
+ 	struct rk817_codec_priv *rk817 = dev_get_drvdata(&pdev->dev);
+-
+-	DBG("%s\n", __func__);
++	int ret;
++
++	if (rk817 && rk817->shared_params_enabled) {
++		ret = rk817_shared_terminal_check(rk817, true);
++		if (ret < 0)
++			rk817_shared_failstop("platform shutdown", ret);
++		/* No private lock is held while core waits for complete PCM release. */
++		ret = snd_soc_component_shutdown_card(&pdev->dev, &soc_codec_dev_rk817, 5000);
++		if (ret < 0) {
++			mutex_lock(&rk817->params_lock);
++			if (!rk817->params_error)
++				rk817->params_error = ret;
++			ret = rk817->params_error;
++			mutex_unlock(&rk817->params_lock);
++			rk817_shared_failstop("platform shutdown drain", ret);
++		}
++		/* Bound card removal already did this; unbound/unprobed is idempotent. */
++		rk817_shared_quiesce(rk817, "platform shutdown complete");
++		return;
++	}
+ 
+ 	if (rk817 && rk817->component)
+ 		rk817_codec_power_down(rk817->component, RK817_CODEC_ALL);
+--- a/sound/soc/generic/simple-card-utils.c
++++ b/sound/soc/generic/simple-card-utils.c
+@@ -12,6 +12,7 @@
+ #include <linux/of_gpio.h>
+ #include <linux/of_graph.h>
+ #include <sound/jack.h>
++#include <sound/pcm_params.h>
+ #include <sound/simple_card_utils.h>
+ 
+ void asoc_simple_convert_fixup(struct asoc_simple_data *data,
+@@ -257,10 +258,25 @@
+ 	struct simple_dai_props *dai_props =
+ 		simple_priv_to_props(priv, rtd->num);
+ 	unsigned int mclk, mclk_fs = 0;
+-	int ret;
++	int ret, cpu_reuse, codec_reuse;
+ 
+ 	if (dai_props->mclk_fs)
+ 		mclk_fs = dai_props->mclk_fs;
++
++	if (snd_soc_dai_hw_params_any(cpu_dai) || snd_soc_dai_hw_params_any(codec_dai)) {
++		if (rtd->num_cpus != 1 || rtd->num_codecs != 1 ||
++		    !snd_soc_dai_hw_params_managed(cpu_dai) ||
++		    !snd_soc_dai_hw_params_managed(codec_dai) || mclk_fs != 256 ||
++		    params_rate(params) != 48000 || params_channels(params) != 2 ||
++		    params_format(params) != SNDRV_PCM_FORMAT_S16_LE)
++			return -EINVAL;
++		cpu_reuse = snd_soc_dai_hw_params_reuse(cpu_dai, substream);
++		codec_reuse = snd_soc_dai_hw_params_reuse(codec_dai, substream);
++		if (cpu_reuse < 0 || codec_reuse < 0 || cpu_reuse != codec_reuse)
++			return cpu_reuse < 0 ? cpu_reuse : codec_reuse < 0 ? codec_reuse : -EINVAL;
++		if (cpu_reuse)
++			return 0; /* No shared CCF query/write or public sysclk request. */
++	}
+ 
+ 	if (mclk_fs) {
+ 		mclk = params_rate(params) * mclk_fs;
+--- a/sound/soc/rockchip/rockchip_i2s_tdm.c
++++ b/sound/soc/rockchip/rockchip_i2s_tdm.c
+@@ -128,6 +128,14 @@
+ 	int rx_reset_id;
+ #endif
+ 	/* Only the locked RK3568 I2S1 ordinary master path opts in. */
++	bool shared_params_enabled;
++	struct snd_soc_dai_params_state shared_params;
++	unsigned int shared_dai_fmt, shared_prepared;
++	/* Per-direction C3 reservation; epoch revoke never claims GO borrow drained. */
++	unsigned int starting, starting_valid, quiet_proven;
++	u64 trcm_epoch, trcm_ticket_epoch[2];
++	struct snd_pcm_substream *trcm_ticket[2], *trcm_active[2];
++	bool transport_live;
+ 	bool checked_lifecycle;
+ 	bool configuring;
+ 	bool format_pm_release;
+@@ -217,6 +225,8 @@
+ static int i2s_checked_error_locked(struct rk_i2s_tdm_dev *i2s_tdm, int ret);
+ static int i2s_checked_stop_locked(struct rk_i2s_tdm_dev *i2s_tdm, int stream, bool force);
+ static int i2s_checked_first_error(int first, int next);
++static int i2s_checked_all_stop_locked(struct rk_i2s_tdm_dev *i2s_tdm);
++static int i2s_trcm_joint_locked(struct rk_i2s_tdm_dev *i2s_tdm, int first);
+ static int rockchip_i2s_tdm_pinctrl_select_clk_state(struct device *dev);
+ 
+ static void i2s_checked_failstop(struct rk_i2s_tdm_dev *i2s_tdm,
+@@ -235,8 +245,12 @@
+ 	spin_lock_irqsave(&i2s_tdm->lock, flags);
+ 	if (i2s_tdm->runtime_error && !i2s_tdm->shutting_down)
+ 		ret = i2s_tdm->runtime_error;
++	else if (i2s_tdm->shared_params_enabled &&
++		 (i2s_tdm->shared_params.pending || i2s_tdm->shared_params.owner[0] ||
++		  i2s_tdm->shared_params.owner[1]))
++		ret = -EBUSY;
+ 	else if ((i2s_tdm->configuring && !i2s_tdm->format_pm_release) ||
+-		 i2s_tdm->started || !i2s_tdm->stop_proven)
++		 i2s_tdm->started || i2s_tdm->starting || !i2s_tdm->stop_proven)
+ 		ret = -EBUSY;
+ 	if (!ret) {
+ 		i2s_tdm->power_transition = true;
+@@ -308,9 +322,7 @@
+ 		if (ret)
+ 			goto cache_error;
+ 		spin_lock_irqsave(&i2s_tdm->lock, flags);
+-		ret = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, true);
+-		next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, true);
+-		ret = i2s_checked_first_error(ret, next);
++		ret = i2s_checked_all_stop_locked(i2s_tdm);
+ 		i2s_tdm->stop_proven = !ret;
+ 		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 		if (ret)
+@@ -326,10 +338,8 @@
+ 	spin_lock_irqsave(&i2s_tdm->lock, flags);
+ 	/* Preserve the initiating errno even if subsequent STOP also fails. */
+ 	i2s_checked_error_locked(i2s_tdm, ret);
+-	next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, true);
+-	proved = !next;
+-	next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, true);
+-	proved = proved && !next;
++	next = i2s_checked_all_stop_locked(i2s_tdm);
++	proved = !next && !i2s_tdm->starting;
+ 	i2s_tdm->stop_proven = proved;
+ 	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 	if (proved) {
+@@ -374,11 +384,11 @@
+ 			      const char *operation)
+ {
+ 	unsigned long flags;
+-	int ret, next;
++	int ret;
+ 
+ 	spin_lock_irqsave(&i2s_tdm->lock, flags);
+ 	/* No cross-ALSA ownership exists here; devres cannot destroy open owners. */
+-	ret = i2s_tdm->configuring || i2s_tdm->started ||
++	ret = i2s_tdm->configuring || i2s_tdm->started || i2s_tdm->starting ||
+ 		READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK]) ||
+ 		READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_CAPTURE]) ? -EBUSY : 0;
+ 	if (!ret) {
+@@ -401,9 +411,7 @@
+ 		if (ret)
+ 			i2s_checked_failstop(i2s_tdm, operation, ret);
+ 		spin_lock_irqsave(&i2s_tdm->lock, flags);
+-		ret = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, true);
+-		next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, true);
+-		ret = i2s_checked_first_error(ret, next);
++		ret = i2s_checked_all_stop_locked(i2s_tdm);
+ 		i2s_tdm->stop_proven = !ret;
+ 		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 		if (ret)
+@@ -432,7 +440,7 @@
+ 	i2s_tdm->shutting_down = true;
+ 	i2s_tdm->irq_live = false;
+ 	ret = READ_ONCE(i2s_tdm->substreams[0]) || READ_ONCE(i2s_tdm->substreams[1]) ||
+-		i2s_tdm->started || i2s_tdm->configuring ? -EBUSY : 0;
++		i2s_tdm->started || i2s_tdm->starting || i2s_tdm->configuring ? -EBUSY : 0;
+ 	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 	if (ret)
+ 		i2s_checked_failstop(i2s_tdm, "probe cleanup", ret);
+@@ -532,8 +540,14 @@
+ /* Protected by lock; never cleared by STOP, HW_FREE, close or PM retry. */
+ static int i2s_checked_error_locked(struct rk_i2s_tdm_dev *i2s_tdm, int ret)
+ {
+-	if (ret < 0 && !i2s_tdm->runtime_error)
++	if (ret < 0 && !i2s_tdm->runtime_error) {
+ 		i2s_tdm->runtime_error = ret;
++		if (i2s_tdm->shared_params_enabled) {
++			i2s_tdm->starting_valid = 0;
++			if (i2s_tdm->trcm_epoch != ~(u64)0)
++				i2s_tdm->trcm_epoch++;
++		}
++	}
+ 	return ret;
+ }
+ 
+@@ -543,7 +557,7 @@
+ 		return i2s_tdm->runtime_error;
+ 	if (i2s_tdm->shutting_down)
+ 		return -ESHUTDOWN;
+-	if (i2s_tdm->configuring || i2s_tdm->power_transition || i2s_tdm->started)
++	if (i2s_tdm->configuring || i2s_tdm->power_transition || i2s_tdm->started || i2s_tdm->starting)
+ 		return -EBUSY;
+ 	return 0;
+ }
+@@ -624,6 +638,220 @@
+ 			udelay(1);
+ 		ret = i2s_checked_irq_locked(i2s_tdm, stream, true);
+ 	}
++	return ret;
++}
++
++/* All transport/ticket state below is protected by the CPU lock. */
++static int i2s_trcm_joint_locked(struct rk_i2s_tdm_dev *i2s_tdm, int first)
++{
++	int ret, next;
++
++	if (first < 0)
++		i2s_checked_error_locked(i2s_tdm, first);
++	/* Revoke admission, but an in-flight C3 GO borrow survives until its STOP. */
++	i2s_tdm->starting_valid = 0;
++	ret = i2s_checked_dma_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, false);
++	next = i2s_checked_dma_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, false);
++	ret = i2s_checked_first_error(ret, next);
++	next = regmap_write_bits(i2s_tdm->regmap, I2S_XFER,
++		I2S_XFER_TXS_MASK | I2S_XFER_RXS_MASK,
++		I2S_XFER_TXS_STOP | I2S_XFER_RXS_STOP);
++	ret = i2s_checked_first_error(ret, next);
++	udelay(150);
++	next = i2s_checked_clear_locked(i2s_tdm);
++	ret = i2s_checked_first_error(ret, next);
++	if (!ret) {
++		i2s_tdm->stop_reads++;
++		if ((readl(i2s_tdm->regs + I2S_XFER) & (I2S_XFER_TXS_MASK | I2S_XFER_RXS_MASK)) ||
++		    (readl(i2s_tdm->regs + I2S_DMACR) & (I2S_DMACR_TDE_MASK | I2S_DMACR_RDE_MASK)) ||
++		    (readl(i2s_tdm->regs + I2S_INTCR) & (I2S_INTCR_TXUIE_MASK | I2S_INTCR_RXOIE_MASK)))
++			ret = -EIO;
++	}
++	if (!ret) {
++		i2s_tdm->started = 0;
++		i2s_tdm->trcm_active[0] = i2s_tdm->trcm_active[1] = NULL;
++		i2s_tdm->transport_live = false;
++		i2s_tdm->quiet_proven = BIT(0) | BIT(1);
++	} else {
++		i2s_tdm->quiet_proven = 0;
++	}
++	i2s_tdm->stop_proven = !ret && !i2s_tdm->starting;
++	i2s_checked_error_locked(i2s_tdm, ret);
++	return i2s_checked_first_error(first, ret);
++}
++
++static int i2s_checked_all_stop_locked(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++	int ret, next;
++
++	if (i2s_tdm->shared_params_enabled)
++		return i2s_trcm_joint_locked(i2s_tdm, 0);
++	ret = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, true);
++	next = i2s_checked_stop_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, true);
++	return i2s_checked_first_error(ret, next);
++}
++
++static int i2s_trcm_quiet_locked(struct rk_i2s_tdm_dev *i2s_tdm, int stream)
++{
++	unsigned int dmask = stream == SNDRV_PCM_STREAM_PLAYBACK ?
++		I2S_DMACR_TDE_MASK : I2S_DMACR_RDE_MASK;
++	unsigned int imask = stream == SNDRV_PCM_STREAM_PLAYBACK ?
++		I2S_INTCR_TXUIE_MASK : I2S_INTCR_RXOIE_MASK;
++	int ret = i2s_checked_dma_locked(i2s_tdm, stream, false);
++
++	if (!ret && ((readl(i2s_tdm->regs + I2S_DMACR) & dmask) ||
++		     (readl(i2s_tdm->regs + I2S_INTCR) & imask)))
++		ret = -EIO;
++	if (!ret)
++		i2s_tdm->quiet_proven |= BIT(stream);
++	else
++		i2s_tdm->quiet_proven &= ~BIT(stream);
++	return ret;
++}
++
++static int i2s_trcm_admit_locked(struct rk_i2s_tdm_dev *i2s_tdm,
++			       struct snd_pcm_substream *ss)
++{
++	unsigned int bit;
++	int stream = ss->stream;
++
++	if (stream != SNDRV_PCM_STREAM_PLAYBACK && stream != SNDRV_PCM_STREAM_CAPTURE)
++		return -EINVAL;
++	bit = BIT(stream);
++	if (i2s_tdm->runtime_error)
++		return i2s_tdm->runtime_error;
++	if (i2s_tdm->shutting_down)
++		return -ESHUTDOWN;
++	if (!READ_ONCE(i2s_tdm->ready))
++		return -EAGAIN;
++	if (i2s_tdm->configuring || i2s_tdm->power_transition || i2s_tdm->shared_params.pending ||
++	    ((i2s_tdm->started | i2s_tdm->starting) & bit))
++		return -EBUSY;
++	if (i2s_tdm->substreams[stream] != ss || i2s_tdm->shared_params.owner[stream] != ss ||
++	    !(i2s_tdm->shared_prepared & bit))
++		return -EINVAL;
++	if (!i2s_tdm->transport_live && !i2s_tdm->stop_proven)
++		return -EBUSY;
++	if (!i2s_tdm->trcm_epoch)
++		i2s_tdm->trcm_epoch = 1;
++	i2s_tdm->trcm_ticket[stream] = ss;
++	i2s_tdm->trcm_ticket_epoch[stream] = i2s_tdm->trcm_epoch;
++	i2s_tdm->starting |= bit;
++	i2s_tdm->starting_valid |= bit;
++	i2s_tdm->irq_drained = false;
++	return 0;
++}
++
++static int i2s_trcm_commit_locked(struct rk_i2s_tdm_dev *i2s_tdm,
++				struct snd_pcm_substream *ss)
++{
++	unsigned int bit = BIT(ss->stream);
++	bool first;
++	int ret;
++
++	if (i2s_tdm->runtime_error)
++		return i2s_tdm->runtime_error;
++	if (i2s_tdm->shutting_down)
++		return -ESHUTDOWN;
++	if (!READ_ONCE(i2s_tdm->ready))
++		return -EAGAIN;
++	if (i2s_tdm->configuring || i2s_tdm->power_transition || i2s_tdm->shared_params.pending)
++		return -EBUSY;
++	if (!(i2s_tdm->starting & i2s_tdm->starting_valid & bit) ||
++	    i2s_tdm->trcm_ticket[ss->stream] != ss ||
++	    i2s_tdm->trcm_ticket_epoch[ss->stream] != i2s_tdm->trcm_epoch ||
++	    i2s_tdm->substreams[ss->stream] != ss ||
++	    i2s_tdm->shared_params.owner[ss->stream] != ss ||
++	    !(i2s_tdm->shared_prepared & bit))
++		return -EINVAL;
++	first = !i2s_tdm->transport_live;
++	if (first && !i2s_tdm->stop_proven)
++		return -EBUSY;
++	i2s_tdm->stop_proven = false;
++	i2s_tdm->quiet_proven &= ~bit;
++	/* Own access before the first request write may partly execute. */
++	i2s_tdm->transport_live = true;
++	ret = i2s_checked_dma_locked(i2s_tdm, ss->stream, true);
++	if (!ret && first)
++		ret = regmap_write_bits(i2s_tdm->regmap, I2S_XFER,
++			I2S_XFER_TXS_MASK | I2S_XFER_RXS_MASK,
++			I2S_XFER_TXS_START | I2S_XFER_RXS_START);
++	if (ret) {
++		i2s_trcm_joint_locked(i2s_tdm, ret);
++		return ret;
++	}
++	i2s_tdm->started |= bit;
++	i2s_tdm->trcm_active[ss->stream] = ss;
++	i2s_tdm->starting &= ~bit;
++	i2s_tdm->starting_valid &= ~bit;
++	i2s_tdm->trcm_ticket[ss->stream] = NULL;
++	i2s_tdm->trcm_ticket_epoch[ss->stream] = 0;
++	return 0;
++}
++
++static int i2s_trcm_stop_locked(struct rk_i2s_tdm_dev *i2s_tdm,
++			      struct snd_pcm_substream *ss, bool component)
++{
++	unsigned int bit = BIT(ss->stream);
++	bool ticket = (i2s_tdm->starting & bit) && i2s_tdm->trcm_ticket[ss->stream] == ss;
++	bool active = (i2s_tdm->started & bit) && i2s_tdm->trcm_active[ss->stream] == ss;
++	int ret;
++
++	/* Component rollback owns only its published ticket; failed admission may own nothing. */
++	if (component && !ticket)
++		return 0;
++	if (!ticket && !active)
++		return 0;
++	if (i2s_tdm->substreams[ss->stream] != ss)
++		return -EINVAL;
++	i2s_tdm->starting_valid &= ~bit;
++	ret = i2s_trcm_quiet_locked(i2s_tdm, ss->stream);
++	if (ret)
++		i2s_trcm_joint_locked(i2s_tdm, ret);
++	if (!ret) {
++		i2s_tdm->started &= ~bit;
++		i2s_tdm->trcm_active[ss->stream] = NULL;
++	}
++	if (component && ticket) {
++		/* C3 rollback has returned from its GO callback; same-ss ALSA is serialized. */
++		i2s_tdm->starting &= ~bit;
++		i2s_tdm->trcm_ticket[ss->stream] = NULL;
++		i2s_tdm->trcm_ticket_epoch[ss->stream] = 0;
++	}
++	if (!(i2s_tdm->started | i2s_tdm->starting)) {
++		int next = i2s_trcm_joint_locked(i2s_tdm, 0);
++		ret = i2s_checked_first_error(ret, next);
++	} else {
++		i2s_tdm->stop_proven = false;
++	}
++	return ret;
++}
++
++static int i2s_trcm_trigger(struct rk_i2s_tdm_dev *i2s_tdm,
++			  struct snd_pcm_substream *ss, int cmd)
++{
++	unsigned long flags;
++	int ret;
++
++	if (ss->stream != SNDRV_PCM_STREAM_PLAYBACK && ss->stream != SNDRV_PCM_STREAM_CAPTURE)
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		ret = i2s_trcm_commit_locked(i2s_tdm, ss);
++		break;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		ret = i2s_trcm_stop_locked(i2s_tdm, ss, false);
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 	return ret;
+ }
+ 
+@@ -679,6 +907,10 @@
+ 		return -EAGAIN;
+ 	if (i2s_tdm->configuring || i2s_tdm->power_transition)
+ 		return -EBUSY;
++	if (i2s_tdm->shared_params_enabled &&
++	    (i2s_tdm->shared_params.owner[stream] != i2s_tdm->substreams[stream] ||
++	     !i2s_tdm->shared_params.owner[stream] || !(i2s_tdm->shared_prepared & bit)))
++		return -EINVAL;
+ 	if (i2s_tdm->started & bit)
+ 		return 0;
+ 	if (i2s_tdm->started || !i2s_tdm->stop_proven)
+@@ -2267,6 +2499,279 @@
+ 				  I2S_TXCR_VDW_MASK | I2S_TXCR_CSR_MASK, fmt);
+ }
+ 
++static int i2s_shared_begin(struct snd_pcm_substream *ss,
++		struct snd_pcm_hw_params *params, struct snd_soc_dai *dai, u64 *cookie)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	struct snd_soc_dai_params_state *p = &i2s_tdm->shared_params;
++	unsigned long flags;
++	int ret;
++
++	/* Pure finite profile rejection precedes even endpoint admission. */
++	if (!i2s_tdm->shared_params_enabled || !i2s_tdm->checked_lifecycle ||
++	    (ss->stream != 0 && ss->stream != 1) || params_rate(params) != 48000 ||
++	    params_channels(params) != 2 || params_format(params) != SNDRV_PCM_FORMAT_S16_LE ||
++	    !i2s_tdm->is_master_mode || i2s_tdm->clk_trcm != I2S_CKR_TRCM_TXONLY ||
++	    i2s_tdm->bclk_fs != 64 || i2s_tdm->lrck_ratio != 1 || i2s_tdm->tdm_mode ||
++	    i2s_tdm->mclk_calibrate || i2s_tdm->io_multiplex)
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	ret = i2s_checked_gate_locked(i2s_tdm);
++	if (!ret && (i2s_tdm->shared_dai_fmt != (SND_SOC_DAIFMT_CBS_CFS |
++		SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S) ||
++		!i2s_tdm->ready || i2s_tdm->substreams[ss->stream] != ss))
++		ret = -EINVAL;
++	if (!ret)
++		ret = snd_soc_dai_params_begin_locked(p, dai, ss, cookie);
++	if (!ret) {
++		p->old_clock[0] = i2s_tdm->mclk_tx_freq;
++		p->old_clock[1] = i2s_tdm->mclk_rx_freq;
++		i2s_tdm->configuring = true;
++	}
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static int i2s_shared_reuse(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	unsigned long flags;
++	int ret;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	ret = i2s_tdm->shared_params.pending == ss ? i2s_tdm->shared_params.reuse : -EINVAL;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static void i2s_shared_abort(struct snd_pcm_substream *ss, struct snd_soc_dai *dai,
++			     u64 cookie, int first_error, bool shared_io_possible)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	struct snd_soc_dai_params_state *p = &i2s_tdm->shared_params;
++	unsigned long flags;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (snd_soc_dai_params_abort_locked(p, dai, ss, cookie)) {
++		i2s_tdm->mclk_tx_freq = p->old_clock[0];
++		i2s_tdm->mclk_rx_freq = p->old_clock[1];
++		i2s_tdm->shared_prepared &= ~BIT(ss->stream);
++		if (shared_io_possible)
++			i2s_checked_error_locked(i2s_tdm, first_error < 0 ? first_error : -EIO);
++		i2s_tdm->configuring = false;
++	}
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++}
++
++static int i2s_shared_commit(struct snd_pcm_substream *ss,
++			      struct snd_soc_dai *dai, u64 cookie)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	struct snd_soc_dai_params_state *p = &i2s_tdm->shared_params;
++	unsigned long flags;
++	int ret;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (!cookie || p->cookie != cookie || p->pending != ss ||
++	    p->transaction != ss || !p->undo)
++		ret = -EINVAL;
++	else if (i2s_tdm->runtime_error)
++		ret = i2s_tdm->runtime_error;
++	else if (i2s_tdm->shutting_down)
++		ret = -ESHUTDOWN;
++	else if (i2s_tdm->power_transition || i2s_tdm->started || !i2s_tdm->configuring)
++		ret = -EBUSY;
++	else
++		ret = snd_soc_dai_params_commit_locked(p, dai, ss, cookie);
++	if (!ret) {
++		i2s_tdm->mclk_tx_freq = 12288000;
++		i2s_tdm->mclk_rx_freq = 12288000;
++		i2s_tdm->shared_prepared &= ~BIT(ss->stream);
++		i2s_tdm->configuring = false;
++	}
++	/* Any matched failure keeps the whole-chain gate until terminal CPU abort.
++	 * A duplicate/stale commit has no pending identity and changes no state.
++	 */
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static void i2s_shared_fault(struct snd_soc_dai *dai, int first_errno)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	unsigned long flags;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	i2s_checked_error_locked(i2s_tdm, first_errno < 0 ? first_errno : -EIO);
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++}
++
++static int i2s_shared_free_check(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	struct snd_soc_dai_params_state *p = &i2s_tdm->shared_params;
++	unsigned long flags;
++	int ret = 0;
++
++	if (ss->stream != 0 && ss->stream != 1)
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (i2s_tdm->configuring || p->pending || ((i2s_tdm->started | i2s_tdm->starting) & BIT(ss->stream)))
++		ret = -EBUSY;
++	else if ((p->owner[ss->stream] && p->owner[ss->stream] != ss) ||
++		 i2s_tdm->substreams[ss->stream] != ss)
++		ret = -EINVAL;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static int i2s_shared_free(struct snd_pcm_substream *ss, struct snd_soc_dai *dai)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	unsigned long flags;
++	int ret;
++
++	if (ss->stream != 0 && ss->stream != 1)
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (i2s_tdm->configuring || ((i2s_tdm->started | i2s_tdm->starting) & BIT(ss->stream)))
++		ret = -EBUSY;
++	else
++		ret = snd_soc_dai_params_free_locked(&i2s_tdm->shared_params, dai, ss);
++	if (!ret)
++		i2s_tdm->shared_prepared &= ~BIT(ss->stream);
++	/* Faults, physical clocks and open leases are never reset by params free. */
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static int i2s_shared_sysclk(struct snd_soc_dai *dai, int clk_id,
++			      unsigned int freq, int dir)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	struct snd_soc_dai_params_state *p = &i2s_tdm->shared_params;
++	unsigned long flags;
++	int ret;
++
++	if (clk_id != 0 || (dir != SND_SOC_CLOCK_IN && dir != SND_SOC_CLOCK_OUT) ||
++	    (!freq && dir != SND_SOC_CLOCK_OUT))
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (i2s_tdm->runtime_error)
++		ret = i2s_tdm->runtime_error;
++	else if (i2s_tdm->shutting_down)
++		ret = -ESHUTDOWN;
++	else if (p->pending || p->owner[0] || p->owner[1])
++		/* This validates a value; it does not authenticate the caller/owner. */
++		ret = freq == 12288000 ? 0 : -EINVAL;
++	else
++		ret = freq ? (freq == 12288000 ? 0 : -EINVAL) : i2s_checked_gate_locked(i2s_tdm);
++	if (!ret && !freq && (!i2s_tdm->stop_proven || !i2s_tdm->irq_drained ||
++			      i2s_tdm->substreams[0] || i2s_tdm->substreams[1]))
++		ret = -EBUSY;
++	if (!ret && !freq) {
++		i2s_tdm->mclk_tx_freq = 0;
++		i2s_tdm->mclk_rx_freq = 0;
++	}
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static int i2s_shared_hw_params(struct snd_pcm_substream *ss,
++		struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	struct snd_soc_dai_params_state *p = &i2s_tdm->shared_params;
++	struct snd_dmaengine_dai_dma_data *dma_data;
++	unsigned long flags;
++	unsigned int fmt;
++	bool reuse, dirty;
++	int ret;
++
++	if ((ss->stream != 0 && ss->stream != 1) || params_rate(params) != 48000 ||
++	    params_channels(params) != 2 || params_format(params) != SNDRV_PCM_FORMAT_S16_LE)
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	ret = i2s_tdm->runtime_error;
++	if (!ret && (p->pending != ss || !p->undo || p->applied ||
++		     !i2s_tdm->configuring || i2s_tdm->power_transition ||
++		     i2s_tdm->shutting_down || i2s_tdm->started))
++		ret = -EBUSY;
++	if (!ret)
++		p->applied = true;
++	reuse = p->reuse;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	if (ret)
++		return ret;
++	if (!reuse) {
++		/* The pending fixed clock is consumed by this explicit substream. */
++		ret = clk_set_rate(i2s_tdm->mclk_tx, 12288000);
++		if (!ret)
++			ret = clk_set_rate(i2s_tdm->mclk_rx, 12288000);
++		if (!ret)
++			ret = rockchip_i2s_tdm_mclk_reparent(i2s_tdm);
++		if (!ret && (clk_get_rate(i2s_tdm->mclk_tx) != 12288000 ||
++			     clk_get_rate(i2s_tdm->mclk_rx) != 12288000))
++			ret = -EINVAL;
++		if (ret)
++			return ret;
++		ret = rockchip_i2s_tdm_params_channels(ss, params, dai);
++		if (ret < 0)
++			return ret;
++		fmt = I2S_TXCR_VDW(16) | ret;
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		ret = i2s_tdm->runtime_error;
++		if (!ret && (i2s_tdm->shutting_down || i2s_tdm->power_transition))
++			ret = -ESHUTDOWN;
++		if (!ret)
++			ret = i2s_checked_params_dirty(ss, i2s_tdm, 4, 64, fmt, &dirty);
++		if (!ret && dirty)
++			ret = i2s_checked_params_trcm(ss, i2s_tdm, 4, 64, fmt);
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		if (ret)
++			return ret;
++	}
++	/* Reuse touches only the new direction's RAM DMA configuration. */
++	dma_data = snd_soc_dai_get_dma_data(dai, ss);
++	dma_data->maxburst = MAXBURST_PER_FIFO;
++	return 0;
++}
++
++static int i2s_shared_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	unsigned long flags;
++	int ret;
++
++	if (fmt != (SND_SOC_DAIFMT_CBS_CFS | SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S))
++		return -EINVAL;
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (i2s_tdm->starting) {
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		return -EBUSY;
++	}
++	if (i2s_tdm->shared_params.pending || i2s_tdm->shared_params.owner[0] ||
++	    i2s_tdm->shared_params.owner[1]) {
++		ret = i2s_tdm->shared_dai_fmt == fmt ? 0 : -EBUSY;
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		return ret;
++	}
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	ret = i2s_checked_set_fmt(i2s_tdm, dai->dev, fmt);
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (!ret)
++		i2s_tdm->shared_dai_fmt = fmt;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	return ret;
++}
++
++static int i2s_shared_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mask,
++		unsigned int rx_mask, int slots, int slot_width)
++{
++	/* No TDM conversion belongs to the finite ordinary-I2S profile. */
++	return -EINVAL;
++}
++
+ static int i2s_checked_hw_params(struct snd_pcm_substream *substream,
+ 			       struct snd_pcm_hw_params *params,
+ 			       struct snd_soc_dai *dai)
+@@ -2447,8 +2952,11 @@
+ 	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
+ 	int ret = 0;
+ 
+-	if (i2s_tdm->checked_lifecycle)
++	if (i2s_tdm->checked_lifecycle) {
++		if (i2s_tdm->shared_params_enabled)
++			return i2s_trcm_trigger(i2s_tdm, substream, cmd);
+ 		return i2s_checked_trigger(i2s_tdm, substream->stream, cmd);
++	}
+ 
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+@@ -2814,6 +3322,36 @@
+ 
+ 	if (!i2s_tdm->checked_lifecycle)
+ 		return 0;
++	if (i2s_tdm->shared_params_enabled) {
++		int stream = substream->stream;
++		if (stream != 0 && stream != 1)
++			return -EINVAL;
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		ret = i2s_tdm->runtime_error;
++		if (!ret && i2s_tdm->shutting_down)
++			ret = -ESHUTDOWN;
++		if (!ret && !READ_ONCE(i2s_tdm->ready))
++			ret = -EAGAIN;
++		if (!ret && (i2s_tdm->configuring || i2s_tdm->power_transition ||
++			i2s_tdm->shared_params.pending || i2s_tdm->starting ||
++			(i2s_tdm->started & BIT(stream))))
++			ret = -EBUSY;
++		if (!ret && (i2s_tdm->substreams[stream] != substream ||
++			i2s_tdm->shared_params.owner[stream] != substream))
++			ret = -EINVAL;
++		if (!ret) {
++			if (i2s_tdm->started)
++				ret = i2s_trcm_quiet_locked(i2s_tdm, stream);
++			else
++				ret = i2s_trcm_joint_locked(i2s_tdm, 0);
++			if (ret)
++				i2s_trcm_joint_locked(i2s_tdm, ret);
++		}
++		if (!ret)
++			i2s_tdm->shared_prepared |= BIT(stream);
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		return ret;
++	}
+ 	spin_lock_irqsave(&i2s_tdm->lock, flags);
+ 	ret = i2s_checked_gate_locked(i2s_tdm);
+ 	if (!ret && !READ_ONCE(i2s_tdm->ready))
+@@ -2834,6 +3372,28 @@
+ 
+ 	if (!i2s_tdm->checked_lifecycle)
+ 		return 0;
++	if (substream->stream != 0 && substream->stream != 1)
++		return -EINVAL;
++	if (i2s_tdm->shared_params_enabled) {
++		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		switch (cmd) {
++		case SNDRV_PCM_TRIGGER_START:
++		case SNDRV_PCM_TRIGGER_RESUME:
++		case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++			ret = i2s_trcm_admit_locked(i2s_tdm, substream);
++			break;
++		case SNDRV_PCM_TRIGGER_STOP:
++		case SNDRV_PCM_TRIGGER_SUSPEND:
++		case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++			ret = i2s_trcm_stop_locked(i2s_tdm, substream, true);
++			break;
++		default:
++			ret = -EINVAL;
++			break;
++		}
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		return ret;
++	}
+ 	switch (cmd) {
+ 	case SNDRV_PCM_TRIGGER_START:
+ 	case SNDRV_PCM_TRIGGER_RESUME:
+@@ -2851,7 +3411,6 @@
+ 		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 		break;
+ 	default:
+-		/* STOP must reach generic DMA cleanup even when CPU is poisoned. */
+ 		break;
+ 	}
+ 	return ret;
+@@ -2899,27 +3458,40 @@
+ 				      struct snd_soc_dai *dai)
+ {
+ 	struct rk_i2s_tdm_dev *i2s_tdm = snd_soc_dai_get_drvdata(dai);
+-
+ 	unsigned long flags;
+ 	int ret = 0;
+ 
+ 	if (i2s_tdm->checked_lifecycle) {
+ 		spin_lock_irqsave(&i2s_tdm->lock, flags);
++		if (i2s_tdm->shared_params_enabled) {
++			if ((substream->stream != 0 && substream->stream != 1) ||
++			    i2s_tdm->substreams[substream->stream] != substream) {
++				spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++				return;
++			}
++			/* Legal ALSA close is serialized against its own trigger/GO call. */
++			if (i2s_tdm->starting & BIT(substream->stream)) {
++				spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++				i2s_checked_failstop(i2s_tdm, "close with C3 GO borrow", -EBUSY);
++				return;
++			}
++			ret = i2s_trcm_stop_locked(i2s_tdm, substream, false);
++		} else if (!(i2s_tdm->started & ~BIT(substream->stream))) {
++			ret = i2s_checked_stop_locked(i2s_tdm, substream->stream, true);
++		}
+ 		if (READ_ONCE(i2s_tdm->substreams[substream->stream]) == substream)
+ 			WRITE_ONCE(i2s_tdm->substreams[substream->stream], NULL);
+-		if (!(i2s_tdm->started & ~BIT(substream->stream)))
+-			ret = i2s_checked_stop_locked(i2s_tdm, substream->stream, true);
+ 		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+-		/* Process context, outside stream/I2S locks; covers captured old pointer. */
+ 		if (i2s_tdm->irq > 0)
+ 			synchronize_irq(i2s_tdm->irq);
+ 		spin_lock_irqsave(&i2s_tdm->lock, flags);
+-		if (!READ_ONCE(i2s_tdm->substreams[0]) && !READ_ONCE(i2s_tdm->substreams[1]))
++		if (!READ_ONCE(i2s_tdm->substreams[0]) && !READ_ONCE(i2s_tdm->substreams[1]) && !i2s_tdm->starting)
+ 			i2s_tdm->irq_drained = true;
+ 		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		if (!ret && i2s_tdm->shared_params_enabled)
++			ret = i2s_shared_free(substream, dai);
+ 		if (ret)
+ 			dev_err(i2s_tdm->dev, "CPU shutdown stop unproved: %d\n", ret);
+-		/* Sticky faults retain the device/clocks; checked PM refuses suspension. */
+ 		return;
+ 	}
+ 	i2s_tdm->substreams[substream->stream] = NULL;
+@@ -2934,6 +3506,45 @@
+ 	.set_fmt = rockchip_i2s_tdm_set_fmt,
+ 	.set_tdm_slot = rockchip_dai_tdm_slot,
+ 	.trigger = rockchip_i2s_tdm_trigger,
++};
++
++static void i2s_trcm_async_fault(struct snd_soc_dai *dai, int first_errno)
++{
++	struct rk_i2s_tdm_dev *i2s_tdm = to_info(dai);
++	unsigned long flags;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	i2s_checked_error_locked(i2s_tdm, first_errno < 0 ? first_errno : -EIO);
++	/* The sink may observe a PM transition or a retained late callback. A RAM
++	 * latch cannot manufacture MMIO ownership or a STOP proof in that state.
++	 */
++	if (!i2s_tdm->hclk_enabled || !i2s_tdm->mclks_enabled || i2s_tdm->power_transition) {
++		if (i2s_tdm->transport_live || i2s_tdm->started || i2s_tdm->starting)
++			i2s_tdm->stop_proven = false;
++		spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++		return;
++	}
++	i2s_trcm_joint_locked(i2s_tdm, first_errno < 0 ? first_errno : -EIO);
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++}
++
++static const struct snd_soc_dai_ops rockchip_i2s_tdm_shared_ops = {
++	.startup = rockchip_i2s_tdm_startup,
++	.shutdown = rockchip_i2s_tdm_shutdown,
++	.prepare = i2s_checked_prepare,
++	.hw_params = i2s_shared_hw_params,
++	.hw_free = i2s_shared_free,
++	.set_sysclk = i2s_shared_sysclk,
++	.set_fmt = i2s_shared_set_fmt,
++	.set_tdm_slot = i2s_shared_tdm_slot,
++	.trigger = rockchip_i2s_tdm_trigger,
++	.hw_params_begin = i2s_shared_begin,
++	.hw_params_commit = i2s_shared_commit,
++	.hw_params_abort = i2s_shared_abort,
++	.hw_params_reuse = i2s_shared_reuse,
++	.hw_params_free_check = i2s_shared_free_check,
++	.hw_params_fault = i2s_shared_fault,
++	.pcm_async_fault = i2s_trcm_async_fault,
+ };
+ 
+ static const struct snd_soc_component_driver rockchip_i2s_tdm_component = {
+@@ -3392,6 +4003,54 @@
+ };
+ 
+ 
++static irqreturn_t i2s_trcm_isr(struct rk_i2s_tdm_dev *i2s_tdm)
++{
++	struct snd_pcm_substream *playback = NULL, *capture = NULL;
++	unsigned long flags;
++	unsigned int val = 0, owners;
++	int ret;
++	irqreturn_t result = IRQ_NONE;
++
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (!i2s_tdm->irq_live || i2s_tdm->shutting_down)
++		goto unlock;
++	ret = regmap_read(i2s_tdm->regmap, I2S_INTSR, &val);
++	if (!ret && !(val & (I2S_INTSR_TXUI_ACT | I2S_INTSR_RXOI_ACT)))
++		goto unlock;
++	owners = i2s_tdm->started | i2s_tdm->starting;
++	if (!ret && (val & I2S_INTSR_TXUI_ACT)) {
++		ret = i2s_checked_irq_locked(i2s_tdm, SNDRV_PCM_STREAM_PLAYBACK, false);
++		if (owners & BIT(SNDRV_PCM_STREAM_PLAYBACK))
++			playback = READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK]);
++		result = IRQ_HANDLED;
++	}
++	if (!ret && (val & I2S_INTSR_RXOI_ACT)) {
++		ret = i2s_checked_irq_locked(i2s_tdm, SNDRV_PCM_STREAM_CAPTURE, false);
++		if (owners & BIT(SNDRV_PCM_STREAM_CAPTURE))
++			capture = READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_CAPTURE]);
++		result = IRQ_HANDLED;
++	}
++	if (ret) {
++		/* A failed status read never interprets val. Failed shared IO affects both. */
++		if (owners & BIT(SNDRV_PCM_STREAM_PLAYBACK))
++			playback = READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_PLAYBACK]);
++		if (owners & BIT(SNDRV_PCM_STREAM_CAPTURE))
++			capture = READ_ONCE(i2s_tdm->substreams[SNDRV_PCM_STREAM_CAPTURE]);
++		i2s_trcm_joint_locked(i2s_tdm, ret);
++		result = IRQ_HANDLED;
++	}
++unlock:
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
++	/* Native START holds its stream lock through RUNNING publication. XRUN waits
++	 * outside the CPU lock; close synchronize_irq drains captured pointer borrows.
++	 */
++	if (playback)
++		snd_pcm_stop_xrun(playback);
++	if (capture)
++		snd_pcm_stop_xrun(capture);
++	return result;
++}
++
+ static irqreturn_t i2s_checked_isr(struct rk_i2s_tdm_dev *i2s_tdm)
+ {
+ 	struct snd_pcm_substream *playback = NULL, *capture = NULL;
+@@ -3399,6 +4058,9 @@
+ 	unsigned int val = 0;
+ 	int ret;
+ 	irqreturn_t result = IRQ_NONE;
++
++	if (i2s_tdm->shared_params_enabled)
++		return i2s_trcm_isr(i2s_tdm);
+ 
+ 	spin_lock_irqsave(&i2s_tdm->lock, flags);
+ 	if (!i2s_tdm->irq_live || i2s_tdm->shutting_down)
+@@ -3625,6 +4287,14 @@
+ 	i2s_tdm->dev = &pdev->dev;
+ 	i2s_tdm->lrck_ratio = 1;
+ 	i2s_tdm->checked_lifecycle = i2s_checked_profile(pdev);
++	i2s_tdm->shared_params_enabled = of_property_read_bool(node,
++						"rockchip,checked-shared-params-48k");
++	if (i2s_tdm->shared_params_enabled) {
++		if (!i2s_tdm->checked_lifecycle)
++			return -EINVAL;
++		/* soc_dai is already a devm-owned per-probe copy. */
++		soc_dai->ops = &rockchip_i2s_tdm_shared_ops;
++	}
+ 
+ 	of_id = of_match_device(rockchip_i2s_tdm_match, &pdev->dev);
+ 	if (!of_id)
+--- a/sound/soc/soc-core.c
++++ b/sound/soc/soc-core.c
+@@ -520,6 +520,22 @@
+ 		flush_delayed_work(&rtd->delayed_work);
+ }
+ 
++/* Finite checked profile has no system low-power contract, including partial ops. */
++static bool snd_soc_card_shared_params_any(struct snd_soc_card *card)
++{
++	struct snd_soc_pcm_runtime *rtd;
++	struct snd_soc_dai *dai;
++	int i;
++
++	for_each_card_rtds(card, rtd) {
++		for_each_rtd_dais(rtd, i, dai) {
++			if (snd_soc_dai_hw_params_any(dai))
++				return true;
++		}
++	}
++	return false;
++}
++
+ #ifdef CONFIG_PM_SLEEP
+ /* powers down audio subsystem for suspend */
+ int snd_soc_suspend(struct device *dev)
+@@ -533,6 +549,9 @@
+ 	/* If the card is not initialized yet there is nothing to do */
+ 	if (!card->instantiated)
+ 		return 0;
++	/* Reject before wait/D3hot/mute, or before poweroff flush/DAPM side effects. */
++	if (snd_soc_card_shared_params_any(card))
++		return -EOPNOTSUPP;
+ 
+ 	/*
+ 	 * Due to the resume being scheduled into a workqueue we could
+@@ -2008,6 +2027,9 @@
+ 
+ 	if (!card->instantiated)
+ 		return 0;
++	/* Reject before wait/D3hot/mute, or before poweroff flush/DAPM side effects. */
++	if (snd_soc_card_shared_params_any(card))
++		return -EOPNOTSUPP;
+ 
+ 	/*
+ 	 * Flush out pmdown_time work - we actually do want to run it
+@@ -2216,6 +2238,70 @@
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(snd_soc_unregister_card);
++
++/**
++ * snd_soc_component_shutdown_card - drain and unbind a component's card
++ * @dev: component device, whose driver lifetime the caller owns
++ * @driver: exact registered component driver
++ * @timeout_ms: file release wait, between 1 and 5000 milliseconds
++ *
++ * Process context only. Opt-in shutdown callers must release their private
++ * locks before entry. client_mutex stabilizes component/card just as in
++ * snd_soc_unregister_card(); card->mutex must not be held while files drain
++ * because DPCM close needs it. Disconnect closes admission but has the normal
++ * ALSA disconnect side effects. A timeout keeps the card/resources allocated.
++ * The existing delayed-work flush and card free retain their framework waits.
++ */
++int snd_soc_component_shutdown_card(struct device *dev,
++			 const struct snd_soc_component_driver *driver,
++			 unsigned int timeout_ms)
++{
++	struct snd_soc_component *component;
++	struct snd_soc_card *card;
++	struct snd_card *snd_card;
++	long remaining;
++	int ret = 0;
++
++	if (!dev || !driver || !timeout_ms || timeout_ms > 5000)
++		return -EINVAL;
++	might_sleep();
++	mutex_lock(&client_mutex);
++	component = snd_soc_lookup_component_nolocked(dev, driver->name);
++	if (!component)
++		goto out;
++	if (component->driver != driver) {
++		ret = -EINVAL;
++		goto out;
++	}
++	card = component->card;
++	if (!card)
++		goto out;
++	if (!card->instantiated || !card->snd_card) {
++		ret = -EINVAL;
++		goto out;
++	}
++	snd_card = card->snd_card;
++	ret = snd_card_disconnect(snd_card);
++	if (ret < 0)
++		goto out;
++	spin_lock_irq(&snd_card->files_lock);
++	remaining = wait_event_lock_irq_timeout(snd_card->remove_sleep,
++					      list_empty(&snd_card->files_list),
++					      snd_card->files_lock,
++					      msecs_to_jiffies(timeout_ms));
++	if (!remaining && !list_empty(&snd_card->files_list))
++		ret = -ETIMEDOUT;
++	spin_unlock_irq(&snd_card->files_lock);
++	if (ret < 0)
++		goto out;
++	/* Same internal cleanup as component removal; no recursive client lock. */
++	snd_soc_unbind_card(card, false);
++out:
++	mutex_unlock(&client_mutex);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(snd_soc_component_shutdown_card);
++
+ 
+ /*
+  * Simplify DAI link configuration by removing ".-1" from device names
+--- a/sound/soc/soc-generic-dmaengine-pcm.c
++++ b/sound/soc/soc-generic-dmaengine-pcm.c
+@@ -154,6 +154,15 @@
+ 	return snd_soc_set_runtime_hwparams(substream, &hw);
+ }
+ 
++static void dmaengine_pcm_cpu_fault(struct snd_pcm_substream *substream,
++				   int first_error, void *arg)
++{
++	struct snd_soc_dai *cpu_dai = arg;
++
++	/* CPU-only optional contract: atomic, no codec callbacks or sleeping. */
++	cpu_dai->driver->ops->pcm_async_fault(cpu_dai, first_error);
++}
++
+ static int dmaengine_pcm_open(struct snd_soc_component *component,
+ 			      struct snd_pcm_substream *substream)
+ {
+@@ -165,7 +174,22 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	return snd_dmaengine_pcm_open(substream, chan);
++	ret = snd_dmaengine_pcm_open(substream, chan);
++	if (!ret) {
++		struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
++		struct snd_soc_dai *cpu_dai;
++
++		if (rtd->num_cpus == 1) {
++			cpu_dai = asoc_rtd_to_cpu(rtd, 0);
++			if (cpu_dai->driver->ops && cpu_dai->driver->ops->pcm_async_fault) {
++				ret = snd_dmaengine_pcm_set_error_sink(substream,
++							    dmaengine_pcm_cpu_fault, cpu_dai);
++				if (ret)
++					snd_dmaengine_pcm_close(substream);
++			}
++		}
++	}
++	return ret;
+ }
+ 
+ static int dmaengine_pcm_close(struct snd_soc_component *component,
+--- a/sound/soc/soc-pcm.c
++++ b/sound/soc/soc-pcm.c
+@@ -906,6 +906,138 @@
+  * function can also be called multiple times and can allocate buffers
+  * (using snd_pcm_lib_* ). It's non-atomic.
+  */
++/* 0: legacy; 1: complete single-link transaction; negative: reject before I/O. */
++static int soc_pcm_params_managed(struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_soc_dai *dai;
++	int i;
++	bool any = false;
++
++	for_each_rtd_dais(rtd, i, dai)
++		any |= snd_soc_dai_hw_params_any(dai);
++	if (!any)
++		return 0;
++	if (rtd->num_cpus != 1 || rtd->num_codecs != 1 ||
++	    rtd->card->num_links != 1 || rtd->card->num_rtd != 1 ||
++	    rtd->dai_link->dynamic || rtd->dai_link->no_pcm)
++		return -EINVAL;
++	for_each_rtd_dais(rtd, i, dai)
++		if (!snd_soc_dai_hw_params_managed(dai))
++			return -EINVAL;
++	return 1;
++}
++
++static void soc_pcm_params_fault(struct snd_soc_pcm_runtime *rtd, int first_errno)
++{
++	asoc_rtd_to_cpu(rtd, 0)->driver->ops->hw_params_fault(asoc_rtd_to_cpu(rtd, 0), first_errno);
++	asoc_rtd_to_codec(rtd, 0)->driver->ops->hw_params_fault(asoc_rtd_to_codec(rtd, 0), first_errno);
++}
++
++/* Checked counterpart of the legacy void component dispatcher, same prefix order. */
++static int soc_pcm_params_component_free(struct snd_pcm_substream *ss,
++					 struct snd_soc_component *last)
++{
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(ss);
++	struct snd_soc_component *component;
++	int i, ret, first = 0;
++
++	for_each_rtd_components(rtd, i, component) {
++		if (component == last)
++			break;
++		if (component->driver->hw_free) {
++			ret = component->driver->hw_free(component, ss);
++			if (ret < 0) {
++				dev_err(component->dev, "checked component hw_free failed: %d\n", ret);
++				if (!first)
++					first = ret;
++			}
++		}
++	}
++	return first;
++}
++
++/* Checked counterpart of the legacy void machine dispatcher. */
++static int soc_pcm_params_link_free(struct snd_pcm_substream *ss)
++{
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(ss);
++
++	if (rtd->dai_link->ops && rtd->dai_link->ops->hw_free)
++		return rtd->dai_link->ops->hw_free(ss);
++	return 0;
++}
++
++static int soc_pcm_hw_params_transaction(struct snd_pcm_substream *ss,
++					 struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(ss);
++	struct snd_soc_dai *cpu = asoc_rtd_to_cpu(rtd, 0);
++	struct snd_soc_dai *codec = asoc_rtd_to_codec(rtd, 0);
++	struct snd_soc_component *component = NULL;
++	u64 cpu_cookie = 0, codec_cookie = 0;
++	bool shared_io_possible = false, machine_attempted = false;
++	bool component_attempted = false;
++	int ret, next, cpu_reuse, codec_reuse;
++
++	/* This finite contract does not support codec slot fixups or conversion. */
++	if (codec->tx_mask || codec->rx_mask ||
++	    !snd_soc_dai_stream_valid(cpu, ss->stream) ||
++	    !snd_soc_dai_stream_valid(codec, ss->stream))
++		return -EINVAL;
++	ret = cpu->driver->ops->hw_params_begin(ss, params, cpu, &cpu_cookie);
++	if (ret < 0)
++		return ret;
++	ret = codec->driver->ops->hw_params_begin(ss, params, codec, &codec_cookie);
++	if (ret < 0)
++		goto abort;
++	cpu_reuse = snd_soc_dai_hw_params_reuse(cpu, ss);
++	codec_reuse = snd_soc_dai_hw_params_reuse(codec, ss);
++	if (cpu_reuse < 0 || codec_reuse < 0 || cpu_reuse != codec_reuse) {
++		ret = cpu_reuse < 0 ? cpu_reuse : codec_reuse < 0 ? codec_reuse : -EINVAL;
++		goto abort;
++	}
++	shared_io_possible = !cpu_reuse;
++	machine_attempted = true;
++	ret = snd_soc_link_hw_params(ss, params);
++	if (ret < 0)
++		goto abort;
++	ret = snd_soc_dai_hw_params(codec, ss, params);
++	if (ret < 0)
++		goto abort;
++	ret = snd_soc_dai_hw_params(cpu, ss, params);
++	if (ret < 0)
++		goto abort;
++	component_attempted = true;
++	ret = snd_soc_pcm_component_hw_params(ss, params, &component);
++	if (ret < 0)
++		goto abort;
++	ret = codec->driver->ops->hw_params_commit(ss, codec, codec_cookie);
++	if (ret < 0)
++		goto abort;
++	ret = cpu->driver->ops->hw_params_commit(ss, cpu, cpu_cookie);
++	if (ret < 0)
++		goto abort;
++	snd_soc_dapm_update_dai(ss, params, codec);
++	snd_soc_dapm_update_dai(ss, params, cpu);
++	return 0;
++abort:
++	/* First errno survives all teardown; no legacy rate=0 or double DAI free. */
++	if (component_attempted)
++		if (soc_pcm_params_component_free(ss, component) < 0)
++			soc_pcm_params_fault(rtd, ret);
++	if (machine_attempted) {
++		next = soc_pcm_params_link_free(ss);
++		if (next < 0)
++			soc_pcm_params_fault(rtd, ret);
++	}
++	if (codec_cookie)
++		codec->driver->ops->hw_params_abort(ss, codec, codec_cookie,
++						 ret, shared_io_possible);
++	if (cpu_cookie)
++		cpu->driver->ops->hw_params_abort(ss, cpu, cpu_cookie,
++						 ret, shared_io_possible);
++	return ret;
++}
++
+ static int soc_pcm_hw_params(struct snd_pcm_substream *substream,
+ 				struct snd_pcm_hw_params *params)
+ {
+@@ -913,13 +1045,23 @@
+ 	struct snd_soc_component *component;
+ 	struct snd_soc_dai *cpu_dai;
+ 	struct snd_soc_dai *codec_dai;
+-	int i, ret = 0;
++	int i, ret = 0, managed;
+ 
+ 	mutex_lock_nested(&rtd->card->pcm_mutex, rtd->card->pcm_subclass);
+ 
+ 	ret = soc_pcm_params_symmetry(substream, params);
+ 	if (ret)
+ 		goto out;
++
++	managed = soc_pcm_params_managed(rtd);
++	if (managed < 0) {
++		ret = managed;
++		goto out;
++	}
++	if (managed) {
++		ret = soc_pcm_hw_params_transaction(substream, params);
++		goto out;
++	}
+ 
+ 	ret = snd_soc_link_hw_params(substream, params);
+ 	if (ret < 0)
+@@ -1035,13 +1177,66 @@
+ /*
+  * Frees resources allocated by hw_params, can be called multiple times
+  */
++static int soc_pcm_hw_free_transaction(struct snd_pcm_substream *ss)
++{
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(ss);
++	struct snd_soc_dai *cpu = asoc_rtd_to_cpu(rtd, 0);
++	struct snd_soc_dai *codec = asoc_rtd_to_codec(rtd, 0);
++	struct snd_soc_dai *dai;
++	int i, ret, next;
++
++	/* Both pure checks precede any owner/cache mutation, mute or DMA teardown. */
++	ret = cpu->driver->ops->hw_params_free_check(ss, cpu);
++	if (ret < 0)
++		return ret;
++	ret = codec->driver->ops->hw_params_free_check(ss, codec);
++	if (ret < 0)
++		return ret;
++	/* CPU rechecks concurrent START under its state lock. */
++	ret = snd_soc_dai_hw_params_release(cpu, ss);
++	if (ret < 0)
++		return ret;
++	ret = snd_soc_dai_hw_params_release(codec, ss);
++	if (ret < 0) {
++		soc_pcm_params_fault(rtd, ret);
++		return ret; /* Half-release is FAULT, never an atomic restore claim. */
++	}
++	for_each_rtd_dais(rtd, i, dai) {
++		if (snd_soc_dai_stream_active(dai, ss->stream) == 1 &&
++		    soc_pcm_has_mute(dai, ss->stream)) {
++			next = snd_soc_dai_digital_mute(dai, 1, ss->stream);
++			if (next < 0 && !ret)
++				ret = next;
++		}
++	}
++	next = soc_pcm_params_link_free(ss);
++	if (next < 0 && !ret)
++		ret = next;
++	next = soc_pcm_params_component_free(ss, NULL);
++	if (next < 0 && !ret)
++		ret = next;
++	if (ret < 0)
++		soc_pcm_params_fault(rtd, ret);
++	return ret;
++}
++
+ static int soc_pcm_hw_free(struct snd_pcm_substream *substream)
+ {
+ 	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+ 	struct snd_soc_dai *dai;
+-	int i, ret = 0;
++	int i, ret = 0, managed;
+ 
+ 	mutex_lock_nested(&rtd->card->pcm_mutex, rtd->card->pcm_subclass);
++
++	managed = soc_pcm_params_managed(rtd);
++	if (managed < 0) {
++		ret = managed;
++		goto out;
++	}
++	if (managed) {
++		ret = soc_pcm_hw_free_transaction(substream);
++		goto out;
++	}
+ 
+ 	/* clear the corresponding DAIs parameters when going to be inactive */
+ 	for_each_rtd_dais(rtd, i, dai) {
+@@ -1075,6 +1270,7 @@
+ 		snd_soc_dai_hw_free(dai, substream);
+ 	}
+ 
++out:
+ 	mutex_unlock(&rtd->card->pcm_mutex);
+ 	return ret;
+ }

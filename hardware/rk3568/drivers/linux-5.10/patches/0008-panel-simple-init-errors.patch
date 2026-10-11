@@ -1,0 +1,257 @@
+diff --git a/drivers/gpu/drm/panel/panel-simple.c b/drivers/gpu/drm/panel/panel-simple.c
+--- a/drivers/gpu/drm/panel/panel-simple.c
++++ b/drivers/gpu/drm/panel/panel-simple.c
+@@ -142,6 +142,8 @@
+ 	struct mipi_dsi_device *dsi;
+ 	bool prepared;
+ 	bool enabled;
++	/* Shutdown failed: do not acquire another supply reference. */
++	bool lifecycle_fault;
+ 	bool power_invert;
+ 	bool no_hpd;
+ 
+@@ -273,8 +275,11 @@
+ 			return -EINVAL;
+ 		}
+ 
+-		if (err < 0)
++		/* Some hosts return packet size rather than payload length. */
++		if (err < 0) {
+ 			dev_err(dev, "failed to write dcs cmd: %d\n", err);
++			return err;
++		}
+ 
+ 		if (cmd->header.delay)
+ 			usleep_range(cmd->header.delay * 1000, cmd->header.delay * 1000 + 100);
+@@ -424,12 +429,13 @@
+ 	int err;
+ 
+ 	if (p->power_invert) {
+-		if (regulator_is_enabled(p->supply) > 0)
+-			regulator_disable(p->supply);
+-	} else {
+-		err = regulator_enable(p->supply);
++		err = regulator_is_enabled(p->supply);
+ 		if (err < 0)
+ 			return err;
++		if (err > 0)
++			return regulator_disable(p->supply);
++	} else {
++		return regulator_enable(p->supply);
+ 	}
+ 
+ 	return 0;
+@@ -440,13 +446,13 @@
+ 	int err;
+ 
+ 	if (p->power_invert) {
+-		if (!regulator_is_enabled(p->supply)) {
+-			err = regulator_enable(p->supply);
+-			if (err < 0)
+-				return err;
+-		}
++		err = regulator_is_enabled(p->supply);
++		if (err < 0)
++			return err;
++		if (!err)
++			return regulator_enable(p->supply);
+ 	} else {
+-		regulator_disable(p->supply);
++		return regulator_disable(p->supply);
+ 	}
+ 
+ 	return 0;
+@@ -456,6 +462,9 @@
+ {
+ 	struct panel_simple *p = to_panel_simple(panel);
+ 	int err;
++
++	if (p->lifecycle_fault)
++		return -EIO;
+ 
+ 	err = panel_simple_regulator_enable(p);
+ 	if (err < 0) {
+@@ -488,33 +497,51 @@
+ static int panel_simple_unprepare(struct drm_panel *panel)
+ {
+ 	struct panel_simple *p = to_panel_simple(panel);
+-
++	int err = 0;
++	int ret;
++
++	if (p->lifecycle_fault)
++		return -EIO;
+ 	if (!p->prepared)
+ 		return 0;
+ 
+ 	if (p->desc->exit_seq) {
+-		if (p->desc->cmd_type == CMD_TYPE_SPI) {
+-			if (panel_simple_xfer_spi_cmd_seq(p, p->desc->exit_seq)) {
+-				dev_err(panel->dev, "failed to send exit spi cmds seq\n");
+-				return -EINVAL;
+-			}
+-		} else {
+-			if (p->dsi)
+-				panel_simple_xfer_dsi_cmd_seq(p, p->desc->exit_seq);
+-		}
++		if (p->desc->cmd_type == CMD_TYPE_SPI)
++			err = panel_simple_xfer_spi_cmd_seq(p, p->desc->exit_seq);
++		else if (p->dsi)
++			err = panel_simple_xfer_dsi_cmd_seq(p, p->desc->exit_seq);
++		if (err)
++			dev_err(panel->dev, "failed to send exit cmds seq: %d\n", err);
+ 	}
+ 
+-	gpiod_direction_output(p->reset_gpio, 1);
+-	gpiod_direction_output(p->enable_gpio, 0);
+-
+-	panel_simple_regulator_disable(p);
++	/* Attempt every independent shutdown action, preserving the first error. */
++	ret = gpiod_direction_output(p->reset_gpio, 1);
++	if (ret) {
++		p->lifecycle_fault = true;
++		if (!err)
++			err = ret;
++	}
++	ret = gpiod_direction_output(p->enable_gpio, 0);
++	if (ret) {
++		p->lifecycle_fault = true;
++		if (!err)
++			err = ret;
++	}
++	ret = panel_simple_regulator_disable(p);
++	if (ret) {
++		p->lifecycle_fault = true;
++		if (!err)
++			err = ret;
++	}
+ 
+ 	if (p->desc->delay.unprepare)
+ 		usleep_range(p->desc->delay.unprepare * 1000, p->desc->delay.unprepare * 1000 + 100);
+ 
++	/* Not ready for enable; an error does not establish that power is off. */
+ 	p->prepared = false;
+-
+-	return 0;
++	p->enabled = false;
++
++	return err;
+ }
+ 
+ static int panel_simple_get_hpd_gpio(struct device *dev,
+@@ -547,8 +574,11 @@
+ 	struct panel_simple *p = to_panel_simple(panel);
+ 	unsigned int delay;
+ 	int err;
++	int ret;
+ 	int hpd_asserted;
+ 
++	if (p->lifecycle_fault)
++		return -EIO;
+ 	if (p->prepared)
+ 		return 0;
+ 
+@@ -558,7 +588,9 @@
+ 		return err;
+ 	}
+ 
+-	gpiod_direction_output(p->enable_gpio, 1);
++	err = gpiod_direction_output(p->enable_gpio, 1);
++	if (err)
++		goto poweroff;
+ 
+ 	delay = p->desc->delay.prepare;
+ 	if (p->no_hpd)
+@@ -570,7 +602,7 @@
+ 		if (IS_ERR(p->hpd_gpio)) {
+ 			err = panel_simple_get_hpd_gpio(panel->dev, p, false);
+ 			if (err)
+-				return err;
++				goto poweroff;
+ 		}
+ 
+ 		err = readx_poll_timeout(gpiod_get_value_cansleep, p->hpd_gpio,
+@@ -582,41 +614,72 @@
+ 		if (err) {
+ 			dev_err(panel->dev,
+ 				"error waiting for hpd GPIO: %d\n", err);
+-			return err;
++			goto poweroff;
+ 		}
+ 	}
+ 
+-	gpiod_direction_output(p->reset_gpio, 1);
++	err = gpiod_direction_output(p->reset_gpio, 1);
++	if (err)
++		goto poweroff;
+ 
+ 	if (p->desc->delay.reset)
+ 		usleep_range(p->desc->delay.reset * 1000, p->desc->delay.reset * 1000 + 100);
+ 
+-	gpiod_direction_output(p->reset_gpio, 0);
++	err = gpiod_direction_output(p->reset_gpio, 0);
++	if (err)
++		goto poweroff;
+ 
+ 	if (p->desc->delay.init)
+ 		usleep_range(p->desc->delay.init * 1000, p->desc->delay.init * 1000 + 100);
+ 
+ 	if (p->desc->init_seq) {
+-		if (p->desc->cmd_type == CMD_TYPE_SPI) {
+-			if (panel_simple_xfer_spi_cmd_seq(p, p->desc->init_seq)) {
+-				dev_err(panel->dev, "failed to send init spi cmds seq\n");
+-				return -EINVAL;
+-			}
+-		} else {
+-			if (p->dsi)
+-				panel_simple_xfer_dsi_cmd_seq(p, p->desc->init_seq);
++		if (p->desc->cmd_type == CMD_TYPE_SPI)
++			err = panel_simple_xfer_spi_cmd_seq(p, p->desc->init_seq);
++		else if (p->dsi)
++			err = panel_simple_xfer_dsi_cmd_seq(p, p->desc->init_seq);
++		if (err) {
++			dev_err(panel->dev, "failed to send init cmds seq: %d\n", err);
++			goto poweroff;
+ 		}
+ 	}
+ 
+ 	p->prepared = true;
++	if (p->desc->init_seq &&
++	    (p->desc->cmd_type == CMD_TYPE_SPI || p->dsi))
++		dev_info(panel->dev, "panel initialization sequence completed (%u commands)\n",
++			 p->desc->init_seq->cmd_cnt);
+ 
+ 	return 0;
++
++poweroff:
++	/* Rollback is best effort; never hide the prepare error. */
++	ret = gpiod_direction_output(p->reset_gpio, 1);
++	if (ret) {
++		p->lifecycle_fault = true;
++		dev_err(panel->dev, "failed to assert reset on rollback: %d\n", ret);
++	}
++	ret = gpiod_direction_output(p->enable_gpio, 0);
++	if (ret) {
++		p->lifecycle_fault = true;
++		dev_err(panel->dev, "failed to disable GPIO on rollback: %d\n", ret);
++	}
++	ret = panel_simple_regulator_disable(p);
++	if (ret) {
++		p->lifecycle_fault = true;
++		dev_err(panel->dev, "failed to disable supply on rollback: %d\n", ret);
++	}
++
++	return err;
+ }
+ 
+ static int panel_simple_enable(struct drm_panel *panel)
+ {
+ 	struct panel_simple *p = to_panel_simple(panel);
+ 
++	if (p->lifecycle_fault)
++		return -EIO;
++	if (!p->prepared)
++		return -EINVAL;
+ 	if (p->enabled)
+ 		return 0;
+ 

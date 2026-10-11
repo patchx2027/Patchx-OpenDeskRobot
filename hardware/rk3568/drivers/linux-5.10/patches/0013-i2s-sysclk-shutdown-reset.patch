@@ -1,0 +1,47 @@
+Subject: [PATCH 13/14] ASoC: rockchip: handle simple-card shutdown sysclk reset
+
+The simple-card shutdown callback calls set_sysclk with a zero frequency
+after the CPU DAI has closed. The checked lifecycle rejected this legal
+cache reset with -EINVAL, causing an ASoC diagnostic after otherwise
+successful DROP, HW_FREE and close.
+
+Keep the existing admission gate and require STOP proof, drained IRQs and
+no substreams for a zero request. Only reset the shared TRCM cached TX/RX
+request under the lock; do not touch clock hardware, PM or codec leases.
+Require a new positive request before subsequent checked hw_params.
+
+Base: SDK 9f9e9d18574d0914c0d192a90c3babfe1fd63c95 plus public 0001-0012.
+Reviewed delta: cpu-lifecycle-v11/source/delta-v10-v11.patch.
+Evidence: outputs/rk3568-audio-runtime-20261005/public-integration-v1/.
+
+diff --git a/sound/soc/rockchip/rockchip_i2s_tdm.c b/sound/soc/rockchip/rockchip_i2s_tdm.c
+--- a/sound/soc/rockchip/rockchip_i2s_tdm.c
++++ b/sound/soc/rockchip/rockchip_i2s_tdm.c
+@@ -2301,6 +2301,9 @@
+ 	/* Admission spans sleeping clock operations without holding spinlock. */
+ 	spin_lock_irqsave(&i2s_tdm->lock, flags);
+ 	ret = i2s_checked_gate_locked(i2s_tdm);
++	/* A shutdown cache reset requires a new positive sysclk request first. */
++	if (!ret && (!i2s_tdm->mclk_tx_freq || !i2s_tdm->mclk_rx_freq))
++		ret = -EINVAL;
+ 	if (!ret)
+ 		i2s_tdm->configuring = true;
+ 	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+@@ -2461,10 +2464,16 @@
+ 	int ret;
+ 
+ 	if (i2s_tdm->checked_lifecycle) {
+-		if ((stream != SNDRV_PCM_STREAM_PLAYBACK && stream != SNDRV_PCM_STREAM_CAPTURE) || !freq)
++		if (stream != SNDRV_PCM_STREAM_PLAYBACK && stream != SNDRV_PCM_STREAM_CAPTURE)
+ 			return -EINVAL;
+ 		spin_lock_irqsave(&i2s_tdm->lock, flags);
+ 		ret = i2s_checked_gate_locked(i2s_tdm);
++		/* Machine shutdown resets cached requests after DAI STOP/IRQ drain. */
++		if (!ret && !freq &&
++		    (!i2s_tdm->stop_proven || !i2s_tdm->irq_drained ||
++		     READ_ONCE(i2s_tdm->substreams[0]) || READ_ONCE(i2s_tdm->substreams[1])))
++			ret = -EBUSY;
++		/* Zero only clears the shared TRCM request; never clk_set_rate(0). */
+ 		if (!ret) {
+ 			i2s_tdm->mclk_tx_freq = freq;
+ 			i2s_tdm->mclk_rx_freq = freq;

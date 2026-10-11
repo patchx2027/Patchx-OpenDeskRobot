@@ -1,0 +1,65 @@
+Subject: [PATCH 14/14] ASoC: rockchip: hand completed format setup to runtime PM
+
+pm_runtime_put queues asynchronous idle work. A worker running before
+set_fmt clears configuring sees -EBUSY from checked runtime suspend;
+the PM core does not retry this case. Probe can then remain active with
+usage zero and retain its MCLK/IRQ ownership after format setup ends.
+
+Keep configuring asserted for the entire in-flight function. After all
+format MMIO ends, latch the first error and publish a private terminal
+handoff only on success, before the PM put. Permit checked suspend to
+consume that handoff while retaining sticky-error, START and STOP gates.
+Every format exit clears it under the same lock. Other commands and
+destruction still reject configuring; suspend's hardware body is unchanged.
+
+Base: SDK 9f9e9d18574d0914c0d192a90c3babfe1fd63c95 plus public 0001-0013.
+Reviewed delta: cpu-lifecycle-v12/source/delta-v11-v12.patch.
+Evidence: outputs/rk3568-audio-runtime-20261005/public-integration-v1/.
+
+diff --git a/sound/soc/rockchip/rockchip_i2s_tdm.c b/sound/soc/rockchip/rockchip_i2s_tdm.c
+--- a/sound/soc/rockchip/rockchip_i2s_tdm.c
++++ b/sound/soc/rockchip/rockchip_i2s_tdm.c
+@@ -130,6 +130,7 @@
+ 	/* Only the locked RK3568 I2S1 ordinary master path opts in. */
+ 	bool checked_lifecycle;
+ 	bool configuring;
++	bool format_pm_release;
+ 	bool stop_proven;
+ 	bool irq_live;
+ 	bool mclks_enabled;
+@@ -234,7 +235,8 @@
+ 	spin_lock_irqsave(&i2s_tdm->lock, flags);
+ 	if (i2s_tdm->runtime_error && !i2s_tdm->shutting_down)
+ 		ret = i2s_tdm->runtime_error;
+-	else if (i2s_tdm->configuring || i2s_tdm->started || !i2s_tdm->stop_proven)
++	else if ((i2s_tdm->configuring && !i2s_tdm->format_pm_release) ||
++		 i2s_tdm->started || !i2s_tdm->stop_proven)
+ 		ret = -EBUSY;
+ 	if (!ret) {
+ 		i2s_tdm->power_transition = true;
+@@ -1517,6 +1519,17 @@
+ 	if (!ret)
+ 		i2s_tdm->is_master_mode = true;
+ put:
++	/* All format MMIO is finished. Publish any first error before PM.
++	 * Keep configuring set: other commands and destruction still reject
++	 * this in-flight function, while a successful terminal handoff lets
++	 * the asynchronous suspend drain IRQs and release our MCLK refs.
++	 */
++	spin_lock_irqsave(&i2s_tdm->lock, flags);
++	if (!ret && i2s_tdm->runtime_error)
++		ret = i2s_tdm->runtime_error;
++	i2s_checked_error_locked(i2s_tdm, ret);
++	i2s_tdm->format_pm_release = !ret;
++	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 	put_ret = pm_runtime_put(dev);
+ 	if (!ret && put_ret < 0)
+ 		ret = put_ret;
+@@ -1525,6 +1538,7 @@
+ 	if (!ret && i2s_tdm->runtime_error)
+ 		ret = i2s_tdm->runtime_error;
+ 	i2s_checked_error_locked(i2s_tdm, ret);
++	i2s_tdm->format_pm_release = false;
+ 	i2s_tdm->configuring = false;
+ 	spin_unlock_irqrestore(&i2s_tdm->lock, flags);
+ 	return ret;
