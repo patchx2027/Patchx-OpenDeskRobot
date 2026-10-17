@@ -1,8 +1,8 @@
 # PatchX OpenDeskRobot
 
-PatchX 是一个桌面机器人项目。`android` 分支提供 Android 应用源码和设备树参考。新的 [Linux 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/codex/linux-release-20261017)提供完整内核、板级设备树、Linux 用户程序和原生辅助工具。
+PatchX 是一个桌面机器人项目。`android` 分支提供 Android 应用源码和设备树参考。新的 [Linux 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/linux)提供完整内核、板级设备树、Linux 用户程序和原生辅助工具。
 
-Android 代码位于 [`software/android/`](software/android/README.md)。Linux 的功能、配置和实测结果见 [Linux 说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/codex/linux-release-20261017/README.md)。
+Android 代码位于 [`software/android/`](software/android/README.md)。Linux 的功能、配置和实测结果见 [Linux 说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/README.md)。
 
 ## 从哪里开始
 
@@ -19,7 +19,7 @@ Android 代码位于 [`software/android/`](software/android/README.md)。Linux �
 
 ### Linux 在线语音
 
-Linux 在线语音仍未完成完整对话：2026 年 10 月 11 日的测试能握手并上传音频，但没有得到识别结果和回复音频；已安装 Android 应用的另一服务目标则停在 TCP 建连超时。具体条件见[在线语音说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/codex/linux-release-20261017/software/linux/docs/ONLINE_VOICE.md)，这些记录不代表服务当前状态。
+Linux 在线语音仍未完成完整对话：2026 年 10 月 11 日的测试能握手并上传音频，但没有得到识别结果和回复音频；已安装 Android 应用的另一服务目标则停在 TCP 建连超时。具体条件见[在线语音说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/software/linux/docs/ONLINE_VOICE.md)，这些记录不代表服务当前状态。
 
 此前的 [`kernel` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/kernel)保留原内核发布版本。
 
