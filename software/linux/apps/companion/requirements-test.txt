@@ -1,0 +1,3 @@
+-r requirements.txt
+# PCM numeric equivalence tests; board runtime already provides NumPy 1.25.
+numpy>=1.25,<2

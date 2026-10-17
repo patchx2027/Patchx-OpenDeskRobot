@@ -1,0 +1,3 @@
+websocket-client==1.8.0
+
+qrcode==8.2

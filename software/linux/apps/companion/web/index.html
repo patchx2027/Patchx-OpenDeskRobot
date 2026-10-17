@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>小伴 · 设备中心</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<section id="pair-gate" class="pair-gate panel" aria-labelledby="pair-title">
+<div class="eyebrow">小伴 · 设备入口</div><h1 id="pair-title">连接你的设备</h1><p id="access-message" role="status">正在确认访问权限…</p>
+<form id="pair-form" hidden autocomplete="off"><label for="pair-code">配对码</label><input id="pair-code" type="password" autocomplete="one-time-code" inputmode="numeric" maxlength="64" required placeholder="输入设备上显示的配对码"><button id="pair-submit" type="submit">配对并进入</button></form><button id="access-retry" type="button" hidden>重试连接</button>
+<p class="muted-copy">局域网访问需要配对。配对只授权设备访问，不会开启麦克风或更改 Wi-Fi。</p></section>
+<div id="app-shell" hidden>
+<header><a class="brand" href="#home">小伴<span>设备中心</span></a><div id="mic-status" class="mic-status" role="status" data-active="unknown">麦克风状态待确认</div><button id="global-mute" class="global-mute" type="button" disabled>立即静音</button><div class="connection"><i id="connection-dot"></i><span id="connection">正在连接控制台</span></div></header>
+<nav class="portal-nav" aria-label="主要导航"><button data-page="home" aria-current="page">首页</button><button data-page="settings">设置</button><button data-page="status">状态</button><button data-page="logs">日志</button></nav>
+<div id="mode-banner" class="mode-banner" role="status">正在获取设备运行模式…</div>
+<main id="portal-main">
+<div id="page-home" class="portal-page home-grid">
+<section class="companion panel" aria-label="设备表情">
+<div class="view-switch" role="group" aria-label="首页画面"><button id="view-expression" type="button" aria-pressed="true">表情</button><button id="view-camera" type="button" aria-pressed="false">摄像头</button></div>
+<div id="camera-frame" class="camera-frame" hidden><img id="camera-image" alt="设备摄像头实时画面"><p id="camera-message" role="status">正在连接摄像头…</p></div>
+<div id="avatar" class="avatar" data-state="offline" data-emotion="neutral" role="img" aria-label="等待连接">
+<svg viewBox="0 0 320 220" aria-hidden="true"><rect class="face-shell" x="20" y="20" width="280" height="180" rx="76"/><g class="eyes"><rect x="87" y="80" width="26" height="47" rx="13"/><rect x="207" y="80" width="26" height="47" rx="13"/></g><path class="mouth" d="M138 150 Q160 168 182 150"/><g class="cheeks"><ellipse cx="75" cy="137" rx="17" ry="6"/><ellipse cx="245" cy="137" rx="17" ry="6"/></g></svg>
+<div class="voice-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+</div>
+<h1 id="state-label" aria-live="polite">等待连接</h1><p id="state-hint">设备麦克风默认关闭，按住按钮才开始录音。</p>
+<div class="controls"><button id="connect" type="button">连接语音服务</button><button id="mute" class="mute" type="button" aria-pressed="true">麦克风已静音</button></div>
+<button id="continuous" type="button" hidden disabled>开始连续对话</button>
+<button id="talk" class="talk" type="button" disabled>按住说话</button>
+<div class="under-controls"><span id="input-hint">使用设备麦克风 · 空格 / 回车也可按住说话</span><button id="interrupt" type="button" class="text-button" disabled>停止回答</button></div>
+</section>
+<div class="details"><section class="panel conversation" aria-labelledby="conversation-title"><div class="section-head"><h2 id="conversation-title">这次对话</h2><span id="emotion" class="tag">平静</span></div><div class="utterance"><span id="transcript-label" class="speaker">你说</span><p id="transcript">你的话会出现在这里</p></div><div class="utterance reply"><span class="speaker">小伴</span><p id="reply">准备好后，连接服务并开启麦克风。</p></div><div id="duplex-input" class="duplex-input" hidden><div class="section-head"><span class="speaker">听到的新一句</span><span id="pending-count" class="tag">没有排队的话</span></div><p id="duplex-state" class="duplex-state" role="status">采集已停止</p><p id="next-transcript" aria-live="polite">开始连续对话后，可以在回答时继续说。</p><small id="duplex-note">下一句会等当前回答播放结束后再回应。</small><div id="echo-review" class="echo-review" hidden aria-labelledby="echo-title"><h3 id="echo-title">疑似扬声器回声，未发送</h3><p id="echo-text"></p><p id="echo-note">内容与近期播放相似，等待你确认。</p><div class="echo-actions"><button id="confirm-echo" type="button" disabled>这是我说的，继续回答</button><button id="dismiss-echo" type="button" disabled>忽略</button></div></div></div></section>
+</div></div>
+<div id="page-settings" class="portal-page" hidden><div class="page-heading"><h1>设置</h1><p>调整设备声音、屏幕与网络。</p></div><details id="network-panel" class="panel network-panel">
+<summary>网络设置 <span>Wi-Fi · 网线可继续使用</span></summary>
+<div class="network-content">
+<p id="network-status" role="status">展开后读取网络状态。不会自动扫描或连接。</p>
+<p id="network-refresh" class="network-refresh" role="status" hidden></p>
+<p id="network-address" class="network-address" hidden></p>
+<p id="network-error" class="network-error" role="alert" hidden></p>
+<div class="network-actions"><button id="network-enable" type="button" disabled>开启 Wi-Fi</button><button id="network-scan" type="button" disabled>扫描 Wi-Fi</button><span id="network-count"></span></div>
+<form id="network-form" autocomplete="off">
+<label for="network-select">选择 Wi-Fi</label>
+<select id="network-select" disabled><option value="">请先扫描附近的 Wi-Fi</option></select>
+<label for="network-password">Wi-Fi 密码</label>
+<input id="network-password" type="password" autocomplete="new-password" autocapitalize="none" spellcheck="false" maxlength="128" disabled aria-describedby="network-note" placeholder="输入所选网络的密码">
+<div class="network-actions"><button id="network-connect" type="submit" disabled>连接所选网络</button><button id="network-disconnect" type="button" disabled>断开所选网络</button></div>
+</form>
+<p id="network-note" class="network-note">开启 Wi-Fi 后，设备系统可能自动重连已保存的网络。密码提交后会从页面清空，由设备系统保存用于重连。网线可继续使用；切换当前 Wi-Fi 可能使远程控制台暂时断开。</p>
+</div>
+</details>
+<details id="device-panel" class="panel network-panel device-panel">
+<summary>声音与屏幕 <span>音量 · 麦克风增益 · 亮度</span></summary>
+<div class="device-content">
+<p id="device-status" role="status">展开后读取设备设置。</p>
+<p id="device-error" class="network-error" role="alert" hidden></p>
+<div class="device-grid">
+<form id="device-volume-form" class="device-setting"><label for="device-volume">扬声器音量 <span id="device-volume-current">未读取</span></label><div class="device-entry"><input id="device-volume" type="range" min="0" max="100" step="1" disabled><output id="device-volume-value" for="device-volume">—</output><button id="device-volume-apply" type="submit" disabled>应用音量</button></div></form>
+<form id="device-speaker-form" class="device-setting"><label for="device-speaker">扬声器开关 <span id="device-speaker-current">未读取</span></label><div class="device-entry"><select id="device-speaker" disabled><option value="">选择开关状态</option><option value="true">打开扬声器</option><option value="false">关闭扬声器</option></select><button id="device-speaker-apply" type="submit" disabled>应用开关</button></div></form>
+<form id="device-mic_gain-form" class="device-setting"><label for="device-mic_gain">麦克风增益 <span id="device-mic_gain-current">未读取</span></label><div class="device-entry"><select id="device-mic_gain" disabled><option value="">选择增益</option><option value="0">0 dB</option><option value="6">6 dB</option><option value="12">12 dB</option><option value="18">18 dB</option><option value="24">24 dB</option><option value="30">30 dB</option><option value="36">36 dB</option><option value="42">42 dB</option></select><button id="device-mic_gain-apply" type="submit" disabled>应用增益</button></div><small>声音较小时可逐档提高；增益过高可能带来噪声或失真。</small></form>
+<form id="device-brightness-form" class="device-setting"><label for="device-brightness">屏幕亮度 <span id="device-brightness-current">未读取</span></label><div class="device-entry"><input id="device-brightness" type="range" min="10" max="100" step="1" disabled><output id="device-brightness-value" for="device-brightness">—</output><button id="device-brightness-apply" type="submit" disabled>应用亮度</button></div></form>
+</div>
+<p id="device-diagnostic" class="device-note"></p>
+<p class="device-note">扬声器开关只控制声音输出，不等于麦克风静音。调整这些设置不会开始录音或播放测试音。设置作用于当前运行系统，重启后可能恢复默认值。</p>
+</div>
+</details>
+
+<section class="panel access-panel"><div class="section-head"><h2>手机访问</h2><span class="tag">同一局域网</span></div><p>手机连接与设备相同的网络后，扫描二维码打开设备页面，再输入配对码。</p><div class="access-layout"><img id="access-qr" alt="设备访问地址二维码" width="176" height="176"><div><a id="device-url" href="#">正在读取设备地址</a><p id="device-addresses" class="muted-copy"></p><div id="pairing-code-panel" class="pairing-code-panel" hidden><span>配对码（重启后更新）</span><strong id="pairing-code-value"></strong><small>请只向你信任的人提供此码。</small></div><p id="access-qr-error" class="network-error" hidden>二维码暂不可用，请在手机浏览器输入上方设备地址。</p><p class="muted-copy">二维码仅用于打开设备地址，不是 Wi-Fi 配网码。配对码不会包含在二维码中。</p></div></div></section></div>
+<div id="page-status" class="portal-page" hidden><div class="page-heading"><h1>设备状态</h1><p>运行资源、视觉服务与对话延迟。</p></div><div class="status-grid"><section class="panel resources"><div class="section-head"><h2>设备状态</h2><span id="updated">尚未同步</span></div><div id="metrics">等待设备数据</div><p id="latency" class="latency"></p><p id="capabilities"></p></section><section class="panel vision" aria-labelledby="vision-title"><div class="section-head"><h2 id="vision-title">视觉感知</h2><span id="face-state" class="tag">等待状态</span></div><p id="face-summary">等待人脸服务</p><ul id="faces" aria-label="识别结果"></ul><small>相似度是匹配分数，不代表准确率。</small></section>
+</div></div>
+<div id="page-logs" class="portal-page" hidden><div class="page-heading"><h1>日志</h1><p>应用日志保存在有容量上限的内存中，服务重启后清空。系统日志只展示内核事件的固定摘要，不是完整原始日志。</p></div><section class="panel"><div class="log-controls"><label for="log-source">来源</label><select id="log-source"><option value="app">应用</option><option value="system">系统摘要</option></select><label for="log-level">级别</label><select id="log-level"><option value="all">全部</option><option value="warning">警告</option><option value="error">错误</option></select><button id="log-refresh" type="button">刷新</button><a id="log-export" class="button-link" href="/api/logs/export?source=app&amp;level=all" download>导出日志</a></div><p id="log-status" role="status">进入此页后读取日志。</p><ol id="log-entries" class="log-entries"></ol></section></div>
+</main>
+<div id="error" class="error" role="alert" hidden></div>
+<footer id="privacy-note">正在确认语音处理方式。</footer>
+</div></body></html>

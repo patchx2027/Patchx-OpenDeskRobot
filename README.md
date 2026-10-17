@@ -1,37 +1,63 @@
-# PatchX RK3568 Linux 内核
+# PatchX Linux
 
-这是 PatchX RK3568 板卡使用的完整 Linux `5.10.160-rt89` 源码，位于 [Patchx-OpenDeskRobot 的 kernel 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/kernel)。下载后可以直接阅读和构建，驱动修改已包含在源码中。
+PatchX RK3568 桌面机器人的 Linux 源码。本分支提供完整内核、板级设备树、Python 用户程序，以及相机、JPEG 和进程管理辅助工具。
+
+Android 应用源码在 [`android` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/android)。
+
+## 在线语音的已知问题
+
+**在线语音尚未完成“讲话 → 识别 → 回答播放”的完整验证。**
+
+2026 年 10 月 11 日的实测中，Linux 能与所提供 Android 源码对应的服务完成 WebSocket 握手并上传 Opus 音频。主动心跳导致的客户端断开已修正，但修正后仍没有识别结果或回复音频。文字诊断只收到回显和 `tts.start`。
+
+已安装 Android 应用使用另一套服务配置，对该目标的测试停在 TCP 建连超时。两种现象发生在不同阶段，原因尚未确定。具体表现、配置要求和排查入口见[在线语音说明](software/linux/docs/ONLINE_VOICE.md)。上述记录不代表服务今天的实时状态。
 
 ## 从哪里开始
 
 | 想做什么 | 入口 |
 | --- | --- |
-| 编译内核、设备树和 RK817 codec 模块 | [构建说明](Documentation/patchx/BUILD.md) |
-| 找到声音、显示、USB 或 Wi-Fi 实现 | [源码阅读指南](Documentation/patchx/SOURCE_GUIDE.md) |
-| 核对板上的测试条件与结果 | [已验证功能](Documentation/patchx/VALIDATION.md) |
-| 查看板级硬件配置 | [rk3568-patchx.dts](arch/arm64/boot/dts/rockchip/rk3568-patchx.dts) |
+| 在电脑上先运行演示 | [用户程序入门](software/linux/docs/GETTING_STARTED.md) |
+| 配置在线语音和板上设备 | [用户程序说明](software/linux/README.md)、[在线语音](software/linux/docs/ONLINE_VOICE.md) |
+| 修改业务消息、表情、声音或相机处理 | [PatchX 应用](software/linux/apps/patchx/README.md) |
+| 修改内核驱动、供电、显示或相机接线 | [内核与设备树阅读指南](Documentation/patchx/SOURCE_GUIDE.md) |
+| 编译内核、设备树和 RK817 模块 | [内核构建](Documentation/patchx/BUILD.md) |
+| 构建相机、JPEG 和原生辅助工具 | [相机接入](software/linux/docs/CAMERA.md)、[原生工具](software/linux/tools/README.md) |
+| 查看依赖及需要自备的厂商输入 | [第三方依赖](software/linux/docs/THIRD_PARTY.md) |
 
 ```sh
-git clone --branch kernel --single-branch \
-    https://github.com/patchx2027/Patchx-OpenDeskRobot.git Patchx-Kernel
-cd Patchx-Kernel
+git clone --branch codex/linux-release-20261017 --single-branch \
+    https://github.com/patchx2027/Patchx-OpenDeskRobot.git Patchx-Linux
+cd Patchx-Linux/software/linux
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install -r apps/patchx/requirements.txt
+python3 -m apps.patchx --config apps/patchx/demo.json
 ```
 
-## 已验证功能
+演示页面为 `http://127.0.0.1:8090/`。演示模式不连接语音服务，也不打开板卡设备。
 
-| 功能 | 实测范围 |
-| --- | --- |
-| RK809 扬声器 | 短音播放，现场确认可听见 |
-| PCM 资源管理 | 10 个阶段，覆盖打开/关闭、单向传输及双向启停 |
-| USB 音频输入 | 16 kHz、`S16_LE`、8 通道接口，前 4 个逻辑通道有明确讲话响应 |
-| DSI 显示 | 720×720 彩条显示，结束后恢复原像素和背光 |
-| Wi-Fi | `PM=0`、`band=a` 的 5 GHz 配置下，64 KiB 双向 TCP 传输一致 |
-| 随机数接口 | Rockchip RNG 绑定、CRNG 就绪与非阻塞 `getrandom` 成功 |
+## 目录
 
-各项结果来自对应的设备树、配置和运行环境，具体条件见[验证记录](Documentation/patchx/VALIDATION.md)。这些功能记录不代表整个源码树已经作为同一套整机系统完成验收。
+```text
+arch/arm64/boot/dts/rockchip/  RK3568 及 PatchX 板级设备树
+arch/arm64/configs/           内核构建配置
+drivers/、sound/、include/     完整内核源码
+Documentation/patchx/         内核阅读、构建和实测说明
+software/linux/apps/patchx/   PatchX 业务与硬件端口
+software/linux/apps/companion/ 语音、网络传输和网页服务
+software/linux/deploy/patchx/  ALSA 配置和在线配置示例
+software/linux/tools/         第一方原生辅助源码与构建入口
+software/linux/tests/         应用测试源码
+```
+
+## 功能与实测范围
+
+内核的声音、显示、USB 采集、Wi-Fi、随机数和相机结果见[实测说明](Documentation/patchx/VALIDATION.md)。用户程序包含业务消息、二维表情、软件音量、背光、MQTT 和相机请求处理，具体接线及启用方法见[用户程序说明](software/linux/README.md)。
+
+相机成像需要匹配的 RKAIQ 和模组 IQ 参数。当前辅助程序保留实测版本校验；自行重建后需要按[相机说明](software/linux/docs/CAMERA.md)重新适配。语音使用 USB 逻辑通道 0，没有复现原 Android 的 CAE、阵列 AEC 或离线唤醒。自动电机端口仍未启用。
 
 ## 来源与许可
 
-基线来自 [Orange Pi Linux BSP](https://github.com/orangepi-xunlong/linux-orangepi.git) 提交 `9f9e9d18574d0914c0d192a90c3babfe1fd63c95`。本分支导入完整源码快照并保留原版权与许可声明，没有导入完整上游 Git 历史。驱动源码采用实际 audio-v5 构建使用的版本；项目入口、配置和文档随仓库提供。来源版本及文件校验值见 [SOURCE.json](Documentation/patchx/SOURCE.json)，上游原始说明保存在 [UPSTREAM-README.md](Documentation/patchx/UPSTREAM-README.md)。
+内核基线为 [Orange Pi Linux BSP](https://github.com/orangepi-xunlong/linux-orangepi.git) 的 `9f9e9d18574d0914c0d192a90c3babfe1fd63c95`，版本 `5.10.160-rt89`。源码来源和板级配置见 [SOURCE.json](Documentation/patchx/SOURCE.json)，本次用户程序的文件清单见 [RELEASE.json](software/linux/RELEASE.json)。
 
-内核及各文件遵循原有许可，见 [COPYING](COPYING) 和 [LICENSES/](LICENSES/)。Wi-Fi firmware/NVRAM 需由使用者取得适用于自己模组和板卡的文件及许可，本仓库不分发这些二进制。
+内核保留原有版权与许可，参见 [COPYING](COPYING) 和 [LICENSES/](LICENSES/)。`software/linux` 中第一方程序采用其 [MIT 许可证](software/linux/LICENSE)；第三方库、算法档案、固件和模组参数遵循各自许可，详见[依赖说明](software/linux/docs/THIRD_PARTY.md)。

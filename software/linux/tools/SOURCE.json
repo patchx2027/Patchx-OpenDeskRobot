@@ -1,0 +1,208 @@
+{
+  "description": "First-party native source snapshot; no vendor algorithms, IQ data or binaries. Paths identify original source provenance, not build-time dependencies.",
+  "sources": [
+    {
+      "source": "outputs/rk3568-newboard-camera-app-20261011/runtime-package/launch-product.c",
+      "published": "tools/launcher/launch-product.c",
+      "sha256": "092ce44cfd3b5bb710b2f5ce6fe3f2fc53bd33ba3fd3d7d27eb4e81fc56afa12",
+      "published_sha256": "092ce44cfd3b5bb710b2f5ce6fe3f2fc53bd33ba3fd3d7d27eb4e81fc56afa12",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-app-20261011/runtime-package/launch-diagnostic.c",
+      "published": "tools/launcher/launch-diagnostic.c",
+      "sha256": "ee57d750812d50ee48fcaf3c781024fd921c42d221763f5ae3129bf8fbc2c9ef",
+      "published_sha256": "ee57d750812d50ee48fcaf3c781024fd921c42d221763f5ae3129bf8fbc2c9ef",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-app-20261011/runtime-package/test-product-namespace.py",
+      "published": "tools/launcher/test-product-namespace.py",
+      "sha256": "a391d36094bde3c89990290166be37afe7a5c3bb317a45d35f3dd57c60e70a5e",
+      "published_sha256": "8da88ead60704383ad35f39e1a42e7e1fb6bfcbfdf3fd4f0746d6a27a2c1efb7",
+      "changed_for_publication": true
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-app-20261011/runtime-package/test-native-namespace.py",
+      "published": "tools/launcher/test-native-namespace.py",
+      "sha256": "b367312116c055d3cecf90a0b13b6d782b70190cc34e6556a7f524789e90aaac",
+      "published_sha256": "103c13ee7f4b1961c262b174fbbfb9683e08522d71eaa1943049aa245c7f1361",
+      "changed_for_publication": true
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-app-20261011/jpeg-encoder/nv12_to_jpeg.c",
+      "published": "tools/jpeg/nv12_to_jpeg.c",
+      "sha256": "be00045878e68accd607384aedf8840b3f57747853acfd94e6a84a06f896dec1",
+      "published_sha256": "be00045878e68accd607384aedf8840b3f57747853acfd94e6a84a06f896dec1",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-app-20261011/jpeg-encoder/test_encoder.py",
+      "published": "tools/jpeg/test_encoder.py",
+      "sha256": "4efc10440c6991f0485ab53e528e01138bc547ad9e32d2bab4dbaa72b999b364",
+      "published_sha256": "4efc10440c6991f0485ab53e528e01138bc547ad9e32d2bab4dbaa72b999b364",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/aiq_finite.cpp",
+      "published": "tools/camera/finite-helper/aiq_finite.cpp",
+      "sha256": "abecbc73edb91a21098b8a9c91220e31f4d335bcc60cf4f18495837b98a14999",
+      "published_sha256": "abecbc73edb91a21098b8a9c91220e31f4d335bcc60cf4f18495837b98a14999",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/camera_diag.c",
+      "published": "tools/camera/finite-helper/camera_diag.c",
+      "sha256": "659e28a9d8be96bab36858bcb6e08e0226239f2a6cf4cf7909205f5be67be681",
+      "published_sha256": "659e28a9d8be96bab36858bcb6e08e0226239f2a6cf4cf7909205f5be67be681",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/capture-source/adapters/capture/v4l2/include/rtctrl/adapters/v4l2/capture.h",
+      "published": "tools/camera/finite-helper/capture-source/adapters/capture/v4l2/include/rtctrl/adapters/v4l2/capture.h",
+      "sha256": "bc6ab88541d45881a996ffe5b115e4a0592874a048b41ad64a44c15c4275cd0e",
+      "published_sha256": "bc6ab88541d45881a996ffe5b115e4a0592874a048b41ad64a44c15c4275cd0e",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_capture.c",
+      "published": "tools/camera/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_capture.c",
+      "sha256": "12f9f905abcfb6a496c7b5b77e713e412c3712893bf92bdb0f9c538428733b88",
+      "published_sha256": "12f9f905abcfb6a496c7b5b77e713e412c3712893bf92bdb0f9c538428733b88",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_format.c",
+      "published": "tools/camera/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_format.c",
+      "sha256": "ebc3b772b5f263e6340ac8545377d6cfcfb3f3547216867120ffa98c092c203c",
+      "published_sha256": "ebc3b772b5f263e6340ac8545377d6cfcfb3f3547216867120ffa98c092c203c",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_format.h",
+      "published": "tools/camera/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_format.h",
+      "sha256": "787ef74e54b911e0040cd376e9393b5ed2963a40d648ad7370860708d713cbbb",
+      "published_sha256": "787ef74e54b911e0040cd376e9393b5ed2963a40d648ad7370860708d713cbbb",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/capture-source/modules/capture/include/rtctrl/capture/capture.h",
+      "published": "tools/camera/finite-helper/capture-source/modules/capture/include/rtctrl/capture/capture.h",
+      "sha256": "304e056fbf34e26fcdd2401ea234afd46de3f100f91b134786229e6154090e94",
+      "published_sha256": "304e056fbf34e26fcdd2401ea234afd46de3f100f91b134786229e6154090e94",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/capture-source/modules/capture/include/rtctrl/capture/capture_backend.h",
+      "published": "tools/camera/finite-helper/capture-source/modules/capture/include/rtctrl/capture/capture_backend.h",
+      "sha256": "f1bab0bdb76a37d77b76e068b980628e62678ba1013d3e14b04086298e10533f",
+      "published_sha256": "f1bab0bdb76a37d77b76e068b980628e62678ba1013d3e14b04086298e10533f",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/capture-source/modules/capture/include/rtctrl/capture/image_format.h",
+      "published": "tools/camera/finite-helper/capture-source/modules/capture/include/rtctrl/capture/image_format.h",
+      "sha256": "849fe9da366082ea14cb46b674860032065bad92fc4aaa6206a0ef2b4b966860",
+      "published_sha256": "849fe9da366082ea14cb46b674860032065bad92fc4aaa6206a0ef2b4b966860",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/capture-source/modules/capture/src/capture.c",
+      "published": "tools/camera/finite-helper/capture-source/modules/capture/src/capture.c",
+      "sha256": "e812d34cf602db51305e27222486125cc86e1707dc1e51315d16ea36ae83316f",
+      "published_sha256": "e812d34cf602db51305e27222486125cc86e1707dc1e51315d16ea36ae83316f",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/tests/fake_aiq.cpp",
+      "published": "tools/camera/finite-helper/tests/fake_aiq.cpp",
+      "sha256": "3c99662db07bd0222ad41043b2d9856255568653dc72aece6a3194285ca5c98a",
+      "published_sha256": "3c99662db07bd0222ad41043b2d9856255568653dc72aece6a3194285ca5c98a",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/tests/fixture.c",
+      "published": "tools/camera/finite-helper/tests/fixture.c",
+      "sha256": "91f5e10bdf6369747a86965c9b0d244771a8f71d355a9b75ff0b5c08dd204cca",
+      "published_sha256": "91f5e10bdf6369747a86965c9b0d244771a8f71d355a9b75ff0b5c08dd204cca",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/tests/test_combined.py",
+      "published": "tools/camera/finite-helper/tests/test_combined.py",
+      "sha256": "95258c438cc210308567b098cd666b0b8ce8a4e4ca30b16e47df9ab8f610f41b",
+      "published_sha256": "95258c438cc210308567b098cd666b0b8ce8a4e4ca30b16e47df9ab8f610f41b",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/tests/test_format.py",
+      "published": "tools/camera/finite-helper/tests/test_format.py",
+      "sha256": "51972a6aad9b63807b655031a8b6de963ef74d9d7d389c0b23bdb6353a292c99",
+      "published_sha256": "51972a6aad9b63807b655031a8b6de963ef74d9d7d389c0b23bdb6353a292c99",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/tests/test_lifecycle.py",
+      "published": "tools/camera/finite-helper/tests/test_lifecycle.py",
+      "sha256": "eaacacfa2d1d263f4d936577d1225abaf6b99db16a3fcf32102ecf7fcb650a65",
+      "published_sha256": "eaacacfa2d1d263f4d936577d1225abaf6b99db16a3fcf32102ecf7fcb650a65",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/tests/test_shared_io.py",
+      "published": "tools/camera/finite-helper/tests/test_shared_io.py",
+      "sha256": "460c707e8ba814991519300882984de5bcb22efb6c5d0b3d274350cebbf06aae",
+      "published_sha256": "460c707e8ba814991519300882984de5bcb22efb6c5d0b3d274350cebbf06aae",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-helper/tests/test_warmup.py",
+      "published": "tools/camera/finite-helper/tests/test_warmup.py",
+      "sha256": "10043fb02421b30c0002687fd64573121eae32bb78d95519e4f9849dfce8707a",
+      "published_sha256": "10043fb02421b30c0002687fd64573121eae32bb78d95519e4f9849dfce8707a",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-supervisor/supervisor.c",
+      "published": "tools/camera/finite-supervisor/supervisor.c",
+      "sha256": "bcedb59f6b83ea16f8599cc497eafbb7cd2b1d3c1e2870b630a17bb9f3b4b9fd",
+      "published_sha256": "bcedb59f6b83ea16f8599cc497eafbb7cd2b1d3c1e2870b630a17bb9f3b4b9fd",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-supervisor/owned-process-cleanup.inc",
+      "published": "tools/camera/finite-supervisor/owned-process-cleanup.inc",
+      "sha256": "b4d02df6066109466c9dcc140af9c8c1775d001e4161e9160491be244911e610",
+      "published_sha256": "b4d02df6066109466c9dcc140af9c8c1775d001e4161e9160491be244911e610",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-supervisor/tests/child.c",
+      "published": "tools/camera/finite-supervisor/tests/child.c",
+      "sha256": "9ac20cb1b4efd6b16360791ece5f1bffab40a39a8dc57c58a1c9723161a14f14",
+      "published_sha256": "9ac20cb1b4efd6b16360791ece5f1bffab40a39a8dc57c58a1c9723161a14f14",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-supervisor/tests/reap-budget.c",
+      "published": "tools/camera/finite-supervisor/tests/reap-budget.c",
+      "sha256": "a116bf0b2af718d7e787e784a9b19a7fc1680251b103dc24cef04a222f4feada",
+      "published_sha256": "a116bf0b2af718d7e787e784a9b19a7fc1680251b103dc24cef04a222f4feada",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/finite-supervisor/tests/test_processes.py",
+      "published": "tools/camera/finite-supervisor/tests/test_processes.py",
+      "sha256": "66c6e7e2633b2498d208a545883cf2dfaf22a908e2f6ef805d01a3745b3cdcac",
+      "published_sha256": "66c6e7e2633b2498d208a545883cf2dfaf22a908e2f6ef805d01a3745b3cdcac",
+      "changed_for_publication": false
+    },
+    {
+      "source": "outputs/rk3568-newboard-camera-20261011/isp-runtime-v2/module-abi-v3/rk-camera-module-locked-wire.h",
+      "published": "tools/camera/abi/rk-camera-module-locked-wire.h",
+      "sha256": "02a333f1aa30f89e7b886468522a63b331eef1d7588a115c19a17c26529686a1",
+      "published_sha256": "02a333f1aa30f89e7b886468522a63b331eef1d7588a115c19a17c26529686a1",
+      "changed_for_publication": false
+    }
+  ]
+}

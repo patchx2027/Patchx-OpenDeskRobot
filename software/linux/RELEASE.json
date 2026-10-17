@@ -1,0 +1,688 @@
+{
+  "schema_version": 1,
+  "snapshot_date": "2026-10-17",
+  "branch": "codex/linux-release-20261017",
+  "source_project": "rtctrl-platform",
+  "source_base_commit": "2de0343fe9fbb447c8e6832fc91610941e96f416",
+  "snapshot_kind": "Current working-tree snapshot, including uncommitted and untracked PatchX sources; not an archive of the base commit.",
+  "kernel_source_manifest": "../../Documentation/patchx/SOURCE.json",
+  "unchanged_application_sources": [
+    {
+      "path": "LICENSE",
+      "sha256": "faefc9f083d422813e3c58b539fde1d04c21541e4f842a83dae4a7acc6133b8e"
+    },
+    {
+      "path": "apps/companion/__init__.py",
+      "sha256": "8ff9f9e64798d3b80982d88b4a7b330525aeb589e44bec5dd096010fae5ed551"
+    },
+    {
+      "path": "apps/companion/__main__.py",
+      "sha256": "5fd1e17ace726b7aad8575823a726b34e6d30da98e3327d2ced111e81ba9f445"
+    },
+    {
+      "path": "apps/companion/access.py",
+      "sha256": "33ef3fb970ee0e3ce23794bc4b286087178f7a4e944fedfbc97f52371a0ab1a4"
+    },
+    {
+      "path": "apps/companion/aec.py",
+      "sha256": "7f95e24a7718ae12655afa9f51724adc768b56fb3abdd95eeb99dcbbda098f86"
+    },
+    {
+      "path": "apps/companion/audio.py",
+      "sha256": "c85952fc00b9656bc074b95d61efb204b6a8e47e58b1d33c319473fa71427f72"
+    },
+    {
+      "path": "apps/companion/cloud_stream.py",
+      "sha256": "9c59ae16497c1e91b6e9c658d6a1d85540ecfdee3694831453a1ff8eb86bdd29"
+    },
+    {
+      "path": "apps/companion/config.py",
+      "sha256": "f13f7e80f39665a9cabf8edacf693c6a8a0c2aa14ed3795ed4a5951313b142c2"
+    },
+    {
+      "path": "apps/companion/core.py",
+      "sha256": "d5a91a896647b79182ded0b6f5265fbff365b76d58fcb0487b5fb034c8d50717"
+    },
+    {
+      "path": "apps/companion/device.py",
+      "sha256": "ef4b1ff097a710017bb937a087422c23abcc3b44d795a177d874b1443d774b24"
+    },
+    {
+      "path": "apps/companion/diagnostics.py",
+      "sha256": "249eb88f8cbca561dab9642f368e02e6b8968fa5ebdb0b32756b3b02d956c73f"
+    },
+    {
+      "path": "apps/companion/echo_guard.py",
+      "sha256": "5423f092761292608608e2ef36f6b9763eae4674221d19f1b03b941f1f7379a5"
+    },
+    {
+      "path": "apps/companion/local_voice.py",
+      "sha256": "4c262a4c3d980e84fd996534883220524345e68ca3f90081d9eae9b7a88b76d2"
+    },
+    {
+      "path": "apps/companion/melo-cpu.conf",
+      "sha256": "91e4db30fb8c79dff0fbb20b95c2d269ea1b158e629100d6780db2044cf7f0d6"
+    },
+    {
+      "path": "apps/companion/melo_npu.py",
+      "sha256": "30d07646a52d8f216f575b187751d2e3ba04e61439f56ccd8f26c781584ac7b9"
+    },
+    {
+      "path": "apps/companion/monitor.py",
+      "sha256": "925d53068ddacc540b1d01cb2e04c0f311866c7023120763712f02dc0857777d"
+    },
+    {
+      "path": "apps/companion/network.py",
+      "sha256": "157823d60e102355fa8856b4537648f7e4a0c4536f42b03f7b00fdc682c9bb7b"
+    },
+    {
+      "path": "apps/companion/requirements-test.txt",
+      "sha256": "680a94f0a904aa1d5c8e6a3bdaeaa11d9871e2296e99d664c07fa5d44c82b55d"
+    },
+    {
+      "path": "apps/companion/requirements.txt",
+      "sha256": "e99b036777d79c4b4cfd9ae1841cc410e39d18789eefa94e80b0112c5b190820"
+    },
+    {
+      "path": "apps/companion/server.py",
+      "sha256": "91324360c38538b032d468dd55abb811bc4e4c527307a924c79e1fe6f126fd08"
+    },
+    {
+      "path": "apps/companion/speech_gate.py",
+      "sha256": "19244664d837454e31911e2d136c749e85b53caa1b0e8572f8fa68d5ec0fb179"
+    },
+    {
+      "path": "apps/companion/speech_worker.py",
+      "sha256": "c49be323cdef1e9bd972fc2ce6ce91c40135667686918908cdd9aae6dd067a8e"
+    },
+    {
+      "path": "apps/companion/streaming_asr.py",
+      "sha256": "5bd5e9cc00bf88be5e7fa8e41a255dd3244a2c77ddc1d941aa1f860dbf99d4ad"
+    },
+    {
+      "path": "apps/companion/transport.py",
+      "sha256": "77a7d722f64a1accd5b2a91ef3151ad90fa4a192fefef7d48978fd8ba3cd8200"
+    },
+    {
+      "path": "apps/companion/web/app.js",
+      "sha256": "8f6385694fdb5d80ba19c48fdf174b1a193ab8ce7b6dac70f1139a9a70b5b861"
+    },
+    {
+      "path": "apps/companion/web/index.html",
+      "sha256": "aa5270381e9954032cae76a5c6ad703a786a1b4c654dc05f66c15718540a93b8"
+    },
+    {
+      "path": "apps/companion/web/style.css",
+      "sha256": "f65022393e9bbeba24e7031ff99ee5c66dda03145781880bc989eb859a2a3146"
+    },
+    {
+      "path": "apps/patchx/__init__.py",
+      "sha256": "4ce60b4e87ad6ce1918114b79e615a56de5cdef803169506803125da737518c9"
+    },
+    {
+      "path": "apps/patchx/__main__.py",
+      "sha256": "62060f3ac795554590318941753ea27bb2066d5c296793187e1952f7440d754f"
+    },
+    {
+      "path": "apps/patchx/audio.py",
+      "sha256": "407a0a173d24b2bd3fe7e913bddd88ce0db9691fa45cf1337fbe738705a8f280"
+    },
+    {
+      "path": "apps/patchx/business.py",
+      "sha256": "6f469c8cce4abb52cd281fad99293c531e214e3a679eeb9848c167b84de1f2e9"
+    },
+    {
+      "path": "apps/patchx/camera.py",
+      "sha256": "5755c8c102ed4e876fd004fd7f32a8110e8378fd1250bc78869c0f7d8fc135a4"
+    },
+    {
+      "path": "apps/patchx/config.py",
+      "sha256": "706106246245868065a7632ff9c454cf0490a0d6e159a75cfae1479b95edbf3f"
+    },
+    {
+      "path": "apps/patchx/demo.json",
+      "sha256": "fe88766c942d455986da62b0a583970bfdb13151a1deffcef4d670a8a4e1cba0"
+    },
+    {
+      "path": "apps/patchx/devices.py",
+      "sha256": "d2b1d14a042c54b0e2d843064e1fd281ecae5794dc667c4f9f032f309d8ba499"
+    },
+    {
+      "path": "apps/patchx/display.py",
+      "sha256": "cf9c8a930121e5d3ea5fe1030851e935c4d3a33537d1fa9fd0a44065eefdd52f"
+    },
+    {
+      "path": "apps/patchx/isp_capture.py",
+      "sha256": "2b112d495cc56b7da73d9641053cbc626b9bff7875a25c275488e7f408390705"
+    },
+    {
+      "path": "apps/patchx/mqtt.py",
+      "sha256": "6c2c85dbd34c260ca261755633410fe7880c3ae5124ec341d78353d61f269abc"
+    },
+    {
+      "path": "apps/patchx/product.py",
+      "sha256": "a880b282071fa9fc07987bfdf36a62977191701b47f9ef2dfa908baad2156b1b"
+    },
+    {
+      "path": "apps/patchx/protocol.py",
+      "sha256": "4157e0d3de4404af6f7f8a30666e5372e54f1c66cf27f3bf74cfd802c9f7a5a9"
+    },
+    {
+      "path": "apps/patchx/requirements.txt",
+      "sha256": "0804426bfdd0aa9b83bc6ff746e1ca75942029c801934df2149c9aef9385293f"
+    },
+    {
+      "path": "apps/patchx/robot_state.py",
+      "sha256": "268b1684ce2cfb0cd79efcd9d394e98d09665c33b2f134888b12a5fa7b44b9fd"
+    },
+    {
+      "path": "apps/patchx/transport.py",
+      "sha256": "10d6000699436b82ed4fabdcced7e4404ab2bf5a1ab157ef17567833502b595b"
+    },
+    {
+      "path": "deploy/patchx/alsa-rk3568.conf",
+      "sha256": "50ac48b63538e223a4c40f4e9bc84d80811bd31305497b859531644f390b34c5"
+    },
+    {
+      "path": "tests/test_companion_transport.py",
+      "sha256": "47ad10e3ccbade02a3b1ce963bb67df441f4262c3aacb00768f5a734b4e2b27a"
+    },
+    {
+      "path": "tests/test_patchx_audio.py",
+      "sha256": "506b62817d4bfc0d1753b1b6d6e9c1d6468d3e79d65955298a97652426d65595"
+    },
+    {
+      "path": "tests/test_patchx_audio_integration.py",
+      "sha256": "c287ec4cb3d9cc77351972767869c844ff98d00275c71ccb9fb6c34a595d7e47"
+    },
+    {
+      "path": "tests/test_patchx_business.py",
+      "sha256": "6e2472681cb25c78ae6cd0200c9a8070ff28b60d32a35556623777ea0c4653c5"
+    },
+    {
+      "path": "tests/test_patchx_camera.py",
+      "sha256": "0d752f43502c54cef8c2443e7bb8f3f863f5a34bae9d905c05c44cd47282fd4f"
+    },
+    {
+      "path": "tests/test_patchx_camera_integration.py",
+      "sha256": "c003b8db10ff773745e54285958773c29b33c6615365e88ca1d42c44344f69d7"
+    },
+    {
+      "path": "tests/test_patchx_display.py",
+      "sha256": "644f0f3afe067fbc4509a44bc99d4d38320281fd3f0830911545ccd42b3a8322"
+    },
+    {
+      "path": "tests/test_patchx_display_integration.py",
+      "sha256": "2ad8fa4f4debe3cff62da7a6226086936cc39df2f3007803d094e1d566402114"
+    },
+    {
+      "path": "tests/test_patchx_isp_capture.py",
+      "sha256": "d0612fd2c516289defaecf734af3ef03906d2b55a00587dab756445e2b813b01"
+    },
+    {
+      "path": "tests/test_patchx_mqtt.py",
+      "sha256": "d1c43c9d13a4257af83c9c55b3ec8178f4e23590bc95bccb13538409d2dbd029"
+    },
+    {
+      "path": "tests/test_patchx_mqtt_integration.py",
+      "sha256": "cd75eb64a8dd4db1bcc80b7831c74dc27bb571ecd3eced1837d355bd3528d458"
+    },
+    {
+      "path": "tests/test_patchx_protocol.py",
+      "sha256": "06e616c2b7cd4c8974282d9717e22cb25b571767472e265407fe32b7971265b7"
+    },
+    {
+      "path": "tests/test_patchx_runtime.py",
+      "sha256": "e03d7c9c310eb053861334a4655e9382c778d0ff12a98d2b1cbde57ff306f606"
+    },
+    {
+      "path": "tests/test_patchx_support.py",
+      "sha256": "767650be44fa941ed020c58f0cb9335836074a27675fb5bb8ef47e4ce306f2d6"
+    }
+  ],
+  "native_source_manifest": "tools/SOURCE.json",
+  "verification_scope": {
+    "publication_checks": [
+      "source hashes",
+      "Python syntax",
+      "JSON syntax",
+      "documentation links",
+      "secret scan",
+      "static device-tree semantic comparison"
+    ],
+    "device_tree_comparison": {
+      "nodes": 983,
+      "properties": 4990,
+      "phandles": 773,
+      "reference_dtb_sha256": "7f2dd6ed2e274889245972c0ac7f01ecaacaa017260b1f6231cf9eaefa17abe1"
+    },
+    "not_run_for_this_publication": [
+      "application test suites",
+      "native compilation",
+      "full kernel build",
+      "new board acceptance",
+      "live voice service trial"
+    ]
+  },
+  "external_inputs_not_redistributed": [
+    "RKAIQ algorithm archives and matching runtime libraries",
+    "module IQ parameters",
+    "root filesystem and system images",
+    "account credentials and device authorization files"
+  ],
+  "online_voice_status": "Unresolved. Historical 2026-10-11 trials are documented in docs/ONLINE_VOICE.md; no complete speech-recognition-answer-playback result is claimed.",
+  "published_files_sha256": [
+    {
+      "path": ".gitignore",
+      "sha256": "b4da6ac15e67c75bd1a94be51e554d168414c9672d166a12c8818684bf4fa55b"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "faefc9f083d422813e3c58b539fde1d04c21541e4f842a83dae4a7acc6133b8e"
+    },
+    {
+      "path": "README.md",
+      "sha256": "29216b546f8d3fe8cd1b765625cf61303eee1c96ac6b431c60311b729f4598d1"
+    },
+    {
+      "path": "apps/companion/README.md",
+      "sha256": "f72473bcf0641ec4fa31b9f2aba1e7fe44358fbd2dcb8d239468196f47a14140"
+    },
+    {
+      "path": "apps/companion/__init__.py",
+      "sha256": "8ff9f9e64798d3b80982d88b4a7b330525aeb589e44bec5dd096010fae5ed551"
+    },
+    {
+      "path": "apps/companion/__main__.py",
+      "sha256": "5fd1e17ace726b7aad8575823a726b34e6d30da98e3327d2ced111e81ba9f445"
+    },
+    {
+      "path": "apps/companion/access.py",
+      "sha256": "33ef3fb970ee0e3ce23794bc4b286087178f7a4e944fedfbc97f52371a0ab1a4"
+    },
+    {
+      "path": "apps/companion/aec.py",
+      "sha256": "7f95e24a7718ae12655afa9f51724adc768b56fb3abdd95eeb99dcbbda098f86"
+    },
+    {
+      "path": "apps/companion/audio.py",
+      "sha256": "c85952fc00b9656bc074b95d61efb204b6a8e47e58b1d33c319473fa71427f72"
+    },
+    {
+      "path": "apps/companion/cloud_stream.py",
+      "sha256": "9c59ae16497c1e91b6e9c658d6a1d85540ecfdee3694831453a1ff8eb86bdd29"
+    },
+    {
+      "path": "apps/companion/config.py",
+      "sha256": "f13f7e80f39665a9cabf8edacf693c6a8a0c2aa14ed3795ed4a5951313b142c2"
+    },
+    {
+      "path": "apps/companion/core.py",
+      "sha256": "d5a91a896647b79182ded0b6f5265fbff365b76d58fcb0487b5fb034c8d50717"
+    },
+    {
+      "path": "apps/companion/device.py",
+      "sha256": "ef4b1ff097a710017bb937a087422c23abcc3b44d795a177d874b1443d774b24"
+    },
+    {
+      "path": "apps/companion/diagnostics.py",
+      "sha256": "249eb88f8cbca561dab9642f368e02e6b8968fa5ebdb0b32756b3b02d956c73f"
+    },
+    {
+      "path": "apps/companion/echo_guard.py",
+      "sha256": "5423f092761292608608e2ef36f6b9763eae4674221d19f1b03b941f1f7379a5"
+    },
+    {
+      "path": "apps/companion/local_voice.py",
+      "sha256": "4c262a4c3d980e84fd996534883220524345e68ca3f90081d9eae9b7a88b76d2"
+    },
+    {
+      "path": "apps/companion/melo-cpu.conf",
+      "sha256": "91e4db30fb8c79dff0fbb20b95c2d269ea1b158e629100d6780db2044cf7f0d6"
+    },
+    {
+      "path": "apps/companion/melo_npu.py",
+      "sha256": "30d07646a52d8f216f575b187751d2e3ba04e61439f56ccd8f26c781584ac7b9"
+    },
+    {
+      "path": "apps/companion/monitor.py",
+      "sha256": "925d53068ddacc540b1d01cb2e04c0f311866c7023120763712f02dc0857777d"
+    },
+    {
+      "path": "apps/companion/network.py",
+      "sha256": "157823d60e102355fa8856b4537648f7e4a0c4536f42b03f7b00fdc682c9bb7b"
+    },
+    {
+      "path": "apps/companion/requirements-test.txt",
+      "sha256": "680a94f0a904aa1d5c8e6a3bdaeaa11d9871e2296e99d664c07fa5d44c82b55d"
+    },
+    {
+      "path": "apps/companion/requirements.txt",
+      "sha256": "e99b036777d79c4b4cfd9ae1841cc410e39d18789eefa94e80b0112c5b190820"
+    },
+    {
+      "path": "apps/companion/server.py",
+      "sha256": "91324360c38538b032d468dd55abb811bc4e4c527307a924c79e1fe6f126fd08"
+    },
+    {
+      "path": "apps/companion/speech_gate.py",
+      "sha256": "19244664d837454e31911e2d136c749e85b53caa1b0e8572f8fa68d5ec0fb179"
+    },
+    {
+      "path": "apps/companion/speech_worker.py",
+      "sha256": "c49be323cdef1e9bd972fc2ce6ce91c40135667686918908cdd9aae6dd067a8e"
+    },
+    {
+      "path": "apps/companion/streaming_asr.py",
+      "sha256": "5bd5e9cc00bf88be5e7fa8e41a255dd3244a2c77ddc1d941aa1f860dbf99d4ad"
+    },
+    {
+      "path": "apps/companion/transport.py",
+      "sha256": "77a7d722f64a1accd5b2a91ef3151ad90fa4a192fefef7d48978fd8ba3cd8200"
+    },
+    {
+      "path": "apps/companion/web/app.js",
+      "sha256": "8f6385694fdb5d80ba19c48fdf174b1a193ab8ce7b6dac70f1139a9a70b5b861"
+    },
+    {
+      "path": "apps/companion/web/index.html",
+      "sha256": "aa5270381e9954032cae76a5c6ad703a786a1b4c654dc05f66c15718540a93b8"
+    },
+    {
+      "path": "apps/companion/web/style.css",
+      "sha256": "f65022393e9bbeba24e7031ff99ee5c66dda03145781880bc989eb859a2a3146"
+    },
+    {
+      "path": "apps/patchx/README.md",
+      "sha256": "e0e96bcce368390bcf55fcc11c188211c25c2ad8318edefbdc557df6638cb826"
+    },
+    {
+      "path": "apps/patchx/__init__.py",
+      "sha256": "4ce60b4e87ad6ce1918114b79e615a56de5cdef803169506803125da737518c9"
+    },
+    {
+      "path": "apps/patchx/__main__.py",
+      "sha256": "62060f3ac795554590318941753ea27bb2066d5c296793187e1952f7440d754f"
+    },
+    {
+      "path": "apps/patchx/audio.py",
+      "sha256": "407a0a173d24b2bd3fe7e913bddd88ce0db9691fa45cf1337fbe738705a8f280"
+    },
+    {
+      "path": "apps/patchx/business.py",
+      "sha256": "6f469c8cce4abb52cd281fad99293c531e214e3a679eeb9848c167b84de1f2e9"
+    },
+    {
+      "path": "apps/patchx/camera.py",
+      "sha256": "5755c8c102ed4e876fd004fd7f32a8110e8378fd1250bc78869c0f7d8fc135a4"
+    },
+    {
+      "path": "apps/patchx/config.py",
+      "sha256": "706106246245868065a7632ff9c454cf0490a0d6e159a75cfae1479b95edbf3f"
+    },
+    {
+      "path": "apps/patchx/demo.json",
+      "sha256": "fe88766c942d455986da62b0a583970bfdb13151a1deffcef4d670a8a4e1cba0"
+    },
+    {
+      "path": "apps/patchx/devices.py",
+      "sha256": "d2b1d14a042c54b0e2d843064e1fd281ecae5794dc667c4f9f032f309d8ba499"
+    },
+    {
+      "path": "apps/patchx/display.py",
+      "sha256": "cf9c8a930121e5d3ea5fe1030851e935c4d3a33537d1fa9fd0a44065eefdd52f"
+    },
+    {
+      "path": "apps/patchx/isp_capture.py",
+      "sha256": "2b112d495cc56b7da73d9641053cbc626b9bff7875a25c275488e7f408390705"
+    },
+    {
+      "path": "apps/patchx/mqtt.py",
+      "sha256": "6c2c85dbd34c260ca261755633410fe7880c3ae5124ec341d78353d61f269abc"
+    },
+    {
+      "path": "apps/patchx/product.py",
+      "sha256": "a880b282071fa9fc07987bfdf36a62977191701b47f9ef2dfa908baad2156b1b"
+    },
+    {
+      "path": "apps/patchx/protocol.py",
+      "sha256": "4157e0d3de4404af6f7f8a30666e5372e54f1c66cf27f3bf74cfd802c9f7a5a9"
+    },
+    {
+      "path": "apps/patchx/requirements.txt",
+      "sha256": "0804426bfdd0aa9b83bc6ff746e1ca75942029c801934df2149c9aef9385293f"
+    },
+    {
+      "path": "apps/patchx/robot_state.py",
+      "sha256": "268b1684ce2cfb0cd79efcd9d394e98d09665c33b2f134888b12a5fa7b44b9fd"
+    },
+    {
+      "path": "apps/patchx/transport.py",
+      "sha256": "10d6000699436b82ed4fabdcced7e4404ab2bf5a1ab157ef17567833502b595b"
+    },
+    {
+      "path": "deploy/patchx/AUDIO.md",
+      "sha256": "aa6684971a3d614ef62a08d4af16759c84ed424c15c718efcaaaa7c3b1ec1fac"
+    },
+    {
+      "path": "deploy/patchx/alsa-rk3568.conf",
+      "sha256": "50ac48b63538e223a4c40f4e9bc84d80811bd31305497b859531644f390b34c5"
+    },
+    {
+      "path": "deploy/patchx/live.example.json",
+      "sha256": "8458c0fff60cf8367aee1df7d785f83e9fb343b5ac848efec206999350f0dd42"
+    },
+    {
+      "path": "docs/CAMERA.md",
+      "sha256": "e301477a8c6b47c203336bbdf06e0b32efaa2498a7c5204b5ab7c249c3364c6d"
+    },
+    {
+      "path": "docs/GETTING_STARTED.md",
+      "sha256": "b481a37963b4a9c629d28acf77b2817c79261ff39ebebb1a242fc387f81c8e83"
+    },
+    {
+      "path": "docs/ONLINE_VOICE.md",
+      "sha256": "2bc3fbd8c1aeea6207ab5362cd0a15d91e6661f5b64d3eed00ae7ca126ea9c53"
+    },
+    {
+      "path": "docs/TESTS.md",
+      "sha256": "74025fc1853d5b663902ee5b86af7a59d20aaff03e1d18b9c4f4d26d9fedd541"
+    },
+    {
+      "path": "docs/THIRD_PARTY.md",
+      "sha256": "b39b61add825b91795d9b190db227c7f2acac929c27ecc1a940bab15de2dbe97"
+    },
+    {
+      "path": "tests/test_companion_transport.py",
+      "sha256": "47ad10e3ccbade02a3b1ce963bb67df441f4262c3aacb00768f5a734b4e2b27a"
+    },
+    {
+      "path": "tests/test_patchx_audio.py",
+      "sha256": "506b62817d4bfc0d1753b1b6d6e9c1d6468d3e79d65955298a97652426d65595"
+    },
+    {
+      "path": "tests/test_patchx_audio_integration.py",
+      "sha256": "c287ec4cb3d9cc77351972767869c844ff98d00275c71ccb9fb6c34a595d7e47"
+    },
+    {
+      "path": "tests/test_patchx_business.py",
+      "sha256": "6e2472681cb25c78ae6cd0200c9a8070ff28b60d32a35556623777ea0c4653c5"
+    },
+    {
+      "path": "tests/test_patchx_camera.py",
+      "sha256": "0d752f43502c54cef8c2443e7bb8f3f863f5a34bae9d905c05c44cd47282fd4f"
+    },
+    {
+      "path": "tests/test_patchx_camera_integration.py",
+      "sha256": "c003b8db10ff773745e54285958773c29b33c6615365e88ca1d42c44344f69d7"
+    },
+    {
+      "path": "tests/test_patchx_display.py",
+      "sha256": "644f0f3afe067fbc4509a44bc99d4d38320281fd3f0830911545ccd42b3a8322"
+    },
+    {
+      "path": "tests/test_patchx_display_integration.py",
+      "sha256": "2ad8fa4f4debe3cff62da7a6226086936cc39df2f3007803d094e1d566402114"
+    },
+    {
+      "path": "tests/test_patchx_isp_capture.py",
+      "sha256": "d0612fd2c516289defaecf734af3ef03906d2b55a00587dab756445e2b813b01"
+    },
+    {
+      "path": "tests/test_patchx_mqtt.py",
+      "sha256": "d1c43c9d13a4257af83c9c55b3ec8178f4e23590bc95bccb13538409d2dbd029"
+    },
+    {
+      "path": "tests/test_patchx_mqtt_integration.py",
+      "sha256": "cd75eb64a8dd4db1bcc80b7831c74dc27bb571ecd3eced1837d355bd3528d458"
+    },
+    {
+      "path": "tests/test_patchx_protocol.py",
+      "sha256": "06e616c2b7cd4c8974282d9717e22cb25b571767472e265407fe32b7971265b7"
+    },
+    {
+      "path": "tests/test_patchx_runtime.py",
+      "sha256": "e03d7c9c310eb053861334a4655e9382c778d0ff12a98d2b1cbde57ff306f606"
+    },
+    {
+      "path": "tests/test_patchx_support.py",
+      "sha256": "767650be44fa941ed020c58f0cb9335836074a27675fb5bb8ef47e4ce306f2d6"
+    },
+    {
+      "path": "tools/.gitignore",
+      "sha256": "84fc43d5a4c0a60c5752c9719c8049d310699d222749abc31579aabe35d8aa14"
+    },
+    {
+      "path": "tools/README.md",
+      "sha256": "20e562fe5adbe3a72c39d7c3f71b39961a2b18af42774243946ad7d73fad46b8"
+    },
+    {
+      "path": "tools/SOURCE.json",
+      "sha256": "9fcf599fd16f2f77f045b52530b66d84b37b145650f7c8278ad769b2a5fd7d7d"
+    },
+    {
+      "path": "tools/build-native.py",
+      "sha256": "189756b80f6d18d298c9dda27253d13e1f89f6a0fd490cc46e7736bb44858387"
+    },
+    {
+      "path": "tools/camera/abi/rk-camera-module-locked-wire.h",
+      "sha256": "02a333f1aa30f89e7b886468522a63b331eef1d7588a115c19a17c26529686a1"
+    },
+    {
+      "path": "tools/camera/finite-helper/aiq_finite.cpp",
+      "sha256": "abecbc73edb91a21098b8a9c91220e31f4d335bcc60cf4f18495837b98a14999"
+    },
+    {
+      "path": "tools/camera/finite-helper/camera_diag.c",
+      "sha256": "659e28a9d8be96bab36858bcb6e08e0226239f2a6cf4cf7909205f5be67be681"
+    },
+    {
+      "path": "tools/camera/finite-helper/capture-source/adapters/capture/v4l2/include/rtctrl/adapters/v4l2/capture.h",
+      "sha256": "bc6ab88541d45881a996ffe5b115e4a0592874a048b41ad64a44c15c4275cd0e"
+    },
+    {
+      "path": "tools/camera/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_capture.c",
+      "sha256": "12f9f905abcfb6a496c7b5b77e713e412c3712893bf92bdb0f9c538428733b88"
+    },
+    {
+      "path": "tools/camera/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_format.c",
+      "sha256": "ebc3b772b5f263e6340ac8545377d6cfcfb3f3547216867120ffa98c092c203c"
+    },
+    {
+      "path": "tools/camera/finite-helper/capture-source/adapters/capture/v4l2/src/v4l2_format.h",
+      "sha256": "787ef74e54b911e0040cd376e9393b5ed2963a40d648ad7370860708d713cbbb"
+    },
+    {
+      "path": "tools/camera/finite-helper/capture-source/modules/capture/include/rtctrl/capture/capture.h",
+      "sha256": "304e056fbf34e26fcdd2401ea234afd46de3f100f91b134786229e6154090e94"
+    },
+    {
+      "path": "tools/camera/finite-helper/capture-source/modules/capture/include/rtctrl/capture/capture_backend.h",
+      "sha256": "f1bab0bdb76a37d77b76e068b980628e62678ba1013d3e14b04086298e10533f"
+    },
+    {
+      "path": "tools/camera/finite-helper/capture-source/modules/capture/include/rtctrl/capture/image_format.h",
+      "sha256": "849fe9da366082ea14cb46b674860032065bad92fc4aaa6206a0ef2b4b966860"
+    },
+    {
+      "path": "tools/camera/finite-helper/capture-source/modules/capture/src/capture.c",
+      "sha256": "e812d34cf602db51305e27222486125cc86e1707dc1e51315d16ea36ae83316f"
+    },
+    {
+      "path": "tools/camera/finite-helper/tests/fake_aiq.cpp",
+      "sha256": "3c99662db07bd0222ad41043b2d9856255568653dc72aece6a3194285ca5c98a"
+    },
+    {
+      "path": "tools/camera/finite-helper/tests/fixture.c",
+      "sha256": "91f5e10bdf6369747a86965c9b0d244771a8f71d355a9b75ff0b5c08dd204cca"
+    },
+    {
+      "path": "tools/camera/finite-helper/tests/test_combined.py",
+      "sha256": "95258c438cc210308567b098cd666b0b8ce8a4e4ca30b16e47df9ab8f610f41b"
+    },
+    {
+      "path": "tools/camera/finite-helper/tests/test_format.py",
+      "sha256": "51972a6aad9b63807b655031a8b6de963ef74d9d7d389c0b23bdb6353a292c99"
+    },
+    {
+      "path": "tools/camera/finite-helper/tests/test_lifecycle.py",
+      "sha256": "eaacacfa2d1d263f4d936577d1225abaf6b99db16a3fcf32102ecf7fcb650a65"
+    },
+    {
+      "path": "tools/camera/finite-helper/tests/test_shared_io.py",
+      "sha256": "460c707e8ba814991519300882984de5bcb22efb6c5d0b3d274350cebbf06aae"
+    },
+    {
+      "path": "tools/camera/finite-helper/tests/test_warmup.py",
+      "sha256": "10043fb02421b30c0002687fd64573121eae32bb78d95519e4f9849dfce8707a"
+    },
+    {
+      "path": "tools/camera/finite-supervisor/owned-process-cleanup.inc",
+      "sha256": "b4d02df6066109466c9dcc140af9c8c1775d001e4161e9160491be244911e610"
+    },
+    {
+      "path": "tools/camera/finite-supervisor/supervisor.c",
+      "sha256": "bcedb59f6b83ea16f8599cc497eafbb7cd2b1d3c1e2870b630a17bb9f3b4b9fd"
+    },
+    {
+      "path": "tools/camera/finite-supervisor/tests/child.c",
+      "sha256": "9ac20cb1b4efd6b16360791ece5f1bffab40a39a8dc57c58a1c9723161a14f14"
+    },
+    {
+      "path": "tools/camera/finite-supervisor/tests/reap-budget.c",
+      "sha256": "a116bf0b2af718d7e787e784a9b19a7fc1680251b103dc24cef04a222f4feada"
+    },
+    {
+      "path": "tools/camera/finite-supervisor/tests/test_processes.py",
+      "sha256": "66c6e7e2633b2498d208a545883cf2dfaf22a908e2f6ef805d01a3745b3cdcac"
+    },
+    {
+      "path": "tools/jpeg/nv12_to_jpeg.c",
+      "sha256": "be00045878e68accd607384aedf8840b3f57747853acfd94e6a84a06f896dec1"
+    },
+    {
+      "path": "tools/jpeg/test_encoder.py",
+      "sha256": "4efc10440c6991f0485ab53e528e01138bc547ad9e32d2bab4dbaa72b999b364"
+    },
+    {
+      "path": "tools/launcher/launch-diagnostic.c",
+      "sha256": "ee57d750812d50ee48fcaf3c781024fd921c42d221763f5ae3129bf8fbc2c9ef"
+    },
+    {
+      "path": "tools/launcher/launch-product.c",
+      "sha256": "092ce44cfd3b5bb710b2f5ce6fe3f2fc53bd33ba3fd3d7d27eb4e81fc56afa12"
+    },
+    {
+      "path": "tools/launcher/test-native-namespace.py",
+      "sha256": "103c13ee7f4b1961c262b174fbbfb9683e08522d71eaa1943049aa245c7f1361"
+    },
+    {
+      "path": "tools/launcher/test-product-namespace.py",
+      "sha256": "8da88ead60704383ad35f39e1a42e7e1fb6bfcbfdf3fd4f0746d6a27a2c1efb7"
+    },
+    {
+      "path": "tools/run-host-fixtures.py",
+      "sha256": "5e3ce5f3b5738a4510825e52f12516f38035eb2010b2bee2b644208a0ff9b8b6"
+    }
+  ]
+}

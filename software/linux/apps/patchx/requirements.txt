@@ -1,0 +1,2 @@
+-r ../companion/requirements.txt
+paho-mqtt==2.1.0

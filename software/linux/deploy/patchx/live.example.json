@@ -1,0 +1,38 @@
+{
+  "voice": {
+    "mode": "live",
+    "voice_backend": "android",
+    "bind": "127.0.0.1",
+    "port": 8090,
+    "backend_url": "wss://example.invalid/patchx",
+    "token_env": "PATCHX_VOICE_TOKEN",
+    "device_id": "REPLACE_WITH_SERVICE_DEVICE_ID",
+    "client_id": "REPLACE_WITH_SERVICE_CLIENT_ID",
+    "standalone_voice": true,
+    "aec_enabled": false,
+    "listen_mode": "realtime",
+    "websocket_heartbeat": false,
+    "capture_device": "patchx_capture",
+    "playback_device": "patchx_playback"
+  },
+  "patchx": {
+    "client_ip": "192.0.2.10",
+    "audio_enabled": false,
+    "volume_initial": 8,
+    "display_enabled": false,
+    "display_device": "/dev/fb0",
+    "backlight_enabled": false,
+    "backlight_path": "",
+    "camera_enabled": false,
+    "camera_program": "",
+    "camera_work_dir": "",
+    "camera_timeout_s": 45,
+    "mqtt_enabled": false,
+    "mqtt_broker": "mqtt.example.invalid",
+    "mqtt_port": 8883,
+    "mqtt_tls": true,
+    "mqtt_username_env": "PATCHX_MQTT_USERNAME",
+    "mqtt_password_env": "PATCHX_MQTT_PASSWORD",
+    "mqtt_client_id_env": "PATCHX_MQTT_CLIENT_ID"
+  }
+}

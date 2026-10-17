@@ -1,0 +1,10 @@
+{
+  "voice": {
+    "mode": "demo",
+    "bind": "127.0.0.1",
+    "port": 8090
+  },
+  "patchx": {
+    "backlight_enabled": false
+  }
+}
