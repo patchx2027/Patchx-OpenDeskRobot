@@ -25,7 +25,7 @@ Android 应用源码在 [`android` 分支](https://github.com/patchx2027/Patchx-
 | 查看依赖及需要自备的厂商输入 | [第三方依赖](software/linux/docs/THIRD_PARTY.md) |
 
 ```sh
-git clone --branch codex/linux-release-20261017 --single-branch \
+git clone --branch linux --single-branch \
     https://github.com/patchx2027/Patchx-OpenDeskRobot.git Patchx-Linux
 cd Patchx-Linux/software/linux
 python3 -m venv .venv

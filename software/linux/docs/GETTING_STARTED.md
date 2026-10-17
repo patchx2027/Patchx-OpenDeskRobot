@@ -5,7 +5,7 @@
 ## 获取源码和依赖
 
 ```sh
-git clone --branch codex/linux-release-20261017 --single-branch https://github.com/patchx2027/Patchx-OpenDeskRobot.git
+git clone --branch linux --single-branch https://github.com/patchx2027/Patchx-OpenDeskRobot.git
 cd Patchx-OpenDeskRobot/software/linux
 python3 --version
 python3 -m venv .venv

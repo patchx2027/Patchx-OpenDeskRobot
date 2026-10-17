@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "snapshot_date": "2026-10-17",
-  "branch": "codex/linux-release-20261017",
+  "branch": "linux",
   "source_project": "rtctrl-platform",
   "source_base_commit": "2de0343fe9fbb447c8e6832fc91610941e96f416",
   "snapshot_kind": "Current working-tree snapshot, including uncommitted and untracked PatchX sources; not an archive of the base commit.",
@@ -478,7 +478,7 @@
     },
     {
       "path": "docs/GETTING_STARTED.md",
-      "sha256": "b481a37963b4a9c629d28acf77b2817c79261ff39ebebb1a242fc387f81c8e83"
+      "sha256": "9c721e961eb3d8a75bfd9e5085101e508388d0f9929d28304abbb7ed493a1fdf"
     },
     {
       "path": "docs/ONLINE_VOICE.md",
