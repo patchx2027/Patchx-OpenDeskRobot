@@ -1,8 +1,8 @@
 # PatchX OpenDeskRobot
 
-PatchX 是一个桌面机器人项目。`android` 分支提供 Android 应用源码和设备树参考，[`kernel` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/kernel)提供完整 Linux 内核源码。
+PatchX 是一个桌面机器人项目。`android` 分支提供 Android 应用源码和设备树参考。新的 [Linux 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/codex/linux-release-20261017)提供完整内核、板级设备树、Linux 用户程序和原生辅助工具。
 
-Android 代码位于 [`software/android/`](software/android/README.md)。Linux 的功能、配置和实测结果见[内核说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/kernel/README.md)。
+Android 代码位于 [`software/android/`](software/android/README.md)。Linux 的功能、配置和实测结果见 [Linux 说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/codex/linux-release-20261017/README.md)。
 
 ## 从哪里开始
 
@@ -12,10 +12,16 @@ Android 代码位于 [`software/android/`](software/android/README.md)。Linux �
 | --- | --- | --- |
 | 了解 Android 应用如何组织 | [Android 工程说明](software/android/README.md) | 应用入口和对应功能的 Java 代码 |
 | 调整屏幕亮度、时序或硬件接线 | [设备树教程](hardware/rk3568/device-tree/GUIDE.md) | 教程对应的 `board/` 文件 |
-| 阅读或修改 Linux 驱动 | [驱动源码导航](hardware/rk3568/drivers/linux-5.10/README.md) | 进入 `kernel` 分支，按功能读源码和构建教程 |
+| 阅读或修改 Linux 驱动 | [驱动源码导航](hardware/rk3568/drivers/linux-5.10/README.md) | 进入 Linux 分支，按功能读源码和构建教程 |
 | 准备编译 Android 应用 | [构建前准备](software/android/README.md#构建前准备) | 先核对第三方依赖，再填写本地配置 |
 
-本分支设备树参考使用 Android 4.19，`kernel` 分支使用 Linux 5.10。开始修改前，先确认自己使用的内核版本。
+本分支设备树参考使用 Android 4.19，Linux 分支使用 Linux 5.10。开始修改前，先确认自己使用的内核版本。
+
+### Linux 在线语音
+
+Linux 在线语音仍未完成完整对话：2026 年 10 月 11 日的测试能握手并上传音频，但没有得到识别结果和回复音频；已安装 Android 应用的另一服务目标则停在 TCP 建连超时。具体条件见[在线语音说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/codex/linux-release-20261017/software/linux/docs/ONLINE_VOICE.md)，这些记录不代表服务当前状态。
+
+此前的 [`kernel` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/kernel)保留原内核发布版本。
 
 ### 文档索引
 
