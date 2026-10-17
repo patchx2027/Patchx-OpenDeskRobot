@@ -1,0 +1,4 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/* Product entry: retain the display/audio base and add the tested OV5695 path. */
+#include "rk3568-patchx.dts"
+#include "rk3568-patchx-camera.dtsi"

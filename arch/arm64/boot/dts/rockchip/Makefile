@@ -18,3 +18,7 @@ subdir-y := $(dts-dirs) overlay
 # PatchX RK3568 board; retain symbols for the matching boot overlay.
 dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3568-patchx.dtb
 DTC_FLAGS_rk3568-patchx += -@
+
+# Product entry adds the measured OV5695 camera path.
+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3568-patchx-product.dtb
+DTC_FLAGS_rk3568-patchx-product += -@

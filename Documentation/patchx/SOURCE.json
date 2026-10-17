@@ -93,5 +93,83 @@
       }
     }
   },
-  "scope": "Source matches the audio-v5 kernel inputs. Board observations and their configurations are documented separately in VALIDATION.md."
+  "scope": "Kernel driver source matches the audio-v5 inputs. Product additions retain the actual in-tree codec configuration and reconstruct the final camera device tree. DT semantic comparison is static artifact verification, not a new complete Image build or whole-product acceptance. Individual board observations and conditions are documented in VALIDATION.md.",
+  "product_config": {
+    "path": "arch/arm64/configs/patchx_rk3568_product.config",
+    "sha256": "d4170c250b3c45dc1879fcd0cd25335213f71dc8e4cb312c1383d764345d0952",
+    "origin": "codec-intree build-v2 complete .config",
+    "difference_from_original": "CONFIG_SND_SOC_RK817=m (was not set)",
+    "historical_use": "In-tree codec module built and loaded against the original audio-v5 Image; no complete Image was rebuilt for that module trial."
+  },
+  "product_device_tree": {
+    "entry": "arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dts",
+    "origin": "Final camera reset-polarity-v2 pre-overlay DTB; original OV5695 driver, reset flags 1",
+    "reference_dtb_sha256": "7f2dd6ed2e274889245972c0ac7f01ecaacaa017260b1f6231cf9eaefa17abe1",
+    "semantic_comparison": {
+      "equal": true,
+      "nodes": 983,
+      "properties": 4990,
+      "phandles": 773,
+      "metadata_equal": true,
+      "includes_symbols": true,
+      "method": "C preprocessor and DTC -@; compare every node path, raw property value, reserve map and FDT version/CPU metadata"
+    },
+    "source_files": {
+      "rk3568-patchx-audio.dtsi": {
+        "bytes": 1838,
+        "sha256": "0b4f4a3d1a3f30682e3a82fe0498df1f36cfbb0ec80e5c7294957df661800bbc",
+        "lines": 62
+      },
+      "rk3568-patchx-base.dtsi": {
+        "bytes": 3047,
+        "sha256": "f55c0a7529010b4669afcce41d7881efb12f1ca57310a9a166418eccb32882a2",
+        "lines": 101
+      },
+      "rk3568-patchx-camera.dtsi": {
+        "bytes": 2101,
+        "sha256": "8be575cff8c2149d1f08089d06c3d8b8f3291e13e7f50db317c9a9cc55660cfe",
+        "lines": 101
+      },
+      "rk3568-patchx-connectivity.dtsi": {
+        "bytes": 1717,
+        "sha256": "e023d68b586bca236fa518c21b3e46ed70690db1965dec59a4c32e17a1461f50",
+        "lines": 63
+      },
+      "rk3568-patchx-display.dtsi": {
+        "bytes": 4554,
+        "sha256": "f930dfba66251f9253386721d8a178de96b583e2a60a613b52cec9d4087a5065",
+        "lines": 125
+      },
+      "rk3568-patchx-panel-init.dtsi": {
+        "bytes": 4436,
+        "sha256": "bee287b6cd88911f091357a5958833f7959438480822fb7da6225660e88962c5",
+        "lines": 189
+      },
+      "rk3568-patchx-phandles.dtsi": {
+        "bytes": 29097,
+        "sha256": "c5e97f9668b67c96e48cd2b9bbcf77ce193789c18b3e7fe77067ecd9d19b258f",
+        "lines": 776
+      },
+      "rk3568-patchx-power.dtsi": {
+        "bytes": 11650,
+        "sha256": "03fb8f69c5fe83cde9628cfaff10a30221a6005449b251c89051f70bea659ee8",
+        "lines": 343
+      },
+      "rk3568-patchx-product.dts": {
+        "bytes": 195,
+        "sha256": "f6d3bb39babc62d72994b4f362aa94894213685cf9ffc5f4ee1d9c856b83fcd8",
+        "lines": 4
+      },
+      "rk3568-patchx.dts": {
+        "bytes": 812,
+        "sha256": "70631633219f27f2f18aae9b7a908bd935b0919104b03e8e48569c5b15b2bf63",
+        "lines": 23
+      }
+    }
+  },
+  "historical_runtime_artifacts": {
+    "image_sha256": "e2a5590fbde0a431a1a900c5fc9789d1e607af71a5300010e5431a2927ae3f61",
+    "intree_rk817_module_sha256": "b862becedc3f0d9166ad9b49791e4745456aa91db9c26d0ed89dde8fe1a2439f",
+    "purpose": "Identify the original runtime observations; binaries are not included."
+  }
 }

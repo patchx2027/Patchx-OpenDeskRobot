@@ -8,7 +8,8 @@
 
 | 想看什么 | 源码入口 | 先关注什么 |
 | --- | --- | --- |
-| 板卡硬件配置 | [rk3568-patchx.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx.dts) | include、启用的控制器及设备连接 |
+| 产品硬件配置 | [rk3568-patchx-product.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dts) | 原显示/音频入口与相机配置的组合 |
+| OV5695 相机 | [ov5695.c](../../drivers/media/i2c/ov5695.c)、[rkisp/](../../drivers/media/platform/rockchip/isp/) | sensor 上下电、CSI2 链路和 ISP 采集 |
 | RK809 扬声器播放 | [rk817_codec.c](../../sound/soc/codecs/rk817_codec.c) | codec 参数、控件和播放路由 |
 | I2S 音频启停 | [rockchip_i2s_tdm.c](../../sound/soc/rockchip/rockchip_i2s_tdm.c) | 时钟、收发模式和流的启停 |
 | PCM 与 DMA 资源 | [soc-pcm.c](../../sound/soc/soc-pcm.c)、[pl330.c](../../drivers/dma/pl330.c) | 打开、准备、停止、释放及失败回滚 |
@@ -19,10 +20,12 @@
 
 ## 设备树文件怎么分工
 
-八个板级文件都在 `arch/arm64/boot/dts/rockchip/`。从入口看 include 顺序，再按要改的功能打开对应文件；同一节点的后续属性会覆盖先前设置。
+产品入口及其板级文件都在 `arch/arm64/boot/dts/rockchip/`。从入口看 include 顺序，再按要改的功能打开对应文件；同一节点的后续属性会覆盖先前设置。
 
 | 文件 | 先看哪里 | 适合在这里修改的内容 |
 | --- | --- | --- |
+| [rk3568-patchx-product.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dts) | 原入口与相机 include | 产品功能组合 |
+| [rk3568-patchx-camera.dtsi](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-camera.dtsi) | OV5695、固定电源、DPHY 与 ISP endpoint | 相机接线、有效电平和数据链路 |
 | [rk3568-patchx.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx.dts) | `/memreserve/` 和 include 顺序 | 板级文件组合、与 loader 配套的保留区 |
 | [rk3568-patchx-base.dtsi](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-base.dtsi) | `memory@200000`、`chosen`、USB 与存储节点 | 内存布局、启动参数及基础控制器配置 |
 | [rk3568-patchx-power.dtsi](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-power.dtsi) | `vcc3v3_sys`、`vcc5v0_host`、`rk809` | 供电连接和电压约束 |
@@ -77,6 +80,14 @@ enable-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
 两行分别指 GPIO0_A5 低有效复位和 GPIO0_C5 高有效使能。第三项是有效电平约定，不是引脚当前电平。面板通过 `power-supply = <&vcc3v3_lcd0_n>` 引用同文件的 LCD 电源；该节点的 `3300000` 微伏表示 3.3 V，上游为 `vcc3v3_sys`。
 
 要查驱动如何使用这些参数，打开 `panel-simple.c`，沿属性读取、上电、复位和命令发送过程阅读。改时序和接线用设备树；改初始化错误处理则进入驱动。
+
+## 阅读相机配置
+
+产品入口在原显示/音频配置后引入 `rk3568-patchx-camera.dtsi`。OV5695 位于 I2C2，地址 `0x36`，沿两条 CSI2 data lane 连接 DPHY0，再到 RKISP virtual channel 0。相机固定电源使能使用 GPIO0_D5 高有效，启动等待 20000 微秒；复位使用 GPIO3_D4 低有效，PWDN 使用 GPIO3_D5 低有效。
+
+设备树中的 `reset-gpios` 有效电平与当前 Linux 5.10 `ov5695.c` 的上下电逻辑配合；产品入口采用实测的 flags=1。保留 SDK 原传感器驱动及时序。端点的显式 phandle 及注释对应最后实测的 pre-overlay 设备树，便于逐属性核对。
+
+先读 `ov5695.c` 的 probe、供电与 stream 控制，再读 [phy-rockchip-csi2-dphy.c](../../drivers/phy/rockchip/phy-rockchip-csi2-dphy.c) 和 RKISP 的 media graph、格式协商、缓冲队列与停止路径。内核提供采集通路；有限 JPEG 实测还使用配套用户态 ISP、调参和编码流程，具体条件见 [验证记录](VALIDATION.md#ov5695-相机采集)。
 
 ## 电源与引脚参数
 

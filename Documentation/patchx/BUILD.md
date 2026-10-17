@@ -8,7 +8,9 @@
 
 还需要 Python 3，并确保 `python` 命令可用：内核的 `scripts/gcc-wrapper.py` 使用 `/usr/bin/env python` 启动。Ubuntu 22.04 可安装 `python-is-python3`，使 `python` 指向 Python 3。
 
-[patchx_rk3568.config](../../arch/arm64/configs/patchx_rk3568.config) 是原构建的完整 `.config`，不是供 `make patchx_rk3568_defconfig` 使用的精简 defconfig。按下列步骤复制到输出目录。
+[patchx_rk3568_product.config](../../arch/arm64/configs/patchx_rk3568_product.config) 是树内 codec 构建使用的完整 `.config`，其中 `CONFIG_SND_SOC_RK817=m`。它不是精简 defconfig，按下列步骤复制到输出目录。
+
+本流程用于从本分支生成配套产物。已完成的实机记录使用原 audio-v5 Image、另行构建的树内 codec 模块及相机设备树；本次源码整合仅进行了设备树制品的静态语义对照，没有重新构建或启动完整产品 Image。
 
 ## 1. 配置和构建内核
 
@@ -21,7 +23,7 @@ OUT="$BUILD_ROOT/kernel"
 
 mkdir "$BUILD_ROOT" || exit 1
 mkdir "$OUT" || exit 1
-cp "$KERNEL_SRC/arch/arm64/configs/patchx_rk3568.config" "$OUT/.config" || exit 1
+cp "$KERNEL_SRC/arch/arm64/configs/patchx_rk3568_product.config" "$OUT/.config" || exit 1
 
 make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
     CROSS_COMPILE=aarch64-linux-gnu- olddefconfig || exit 1
@@ -30,22 +32,36 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
     CROSS_COMPILE=aarch64-linux-gnu- Image modules || exit 1
 ```
 
-成功后，内核位于 `$OUT/arch/arm64/boot/Image`。保留输出目录中的最终 `.config` 和 `Module.symvers`，下一步构建模块还会使用它们。
+成功后，内核位于 `$OUT/arch/arm64/boot/Image`，RK817 codec 模块位于 `$OUT/sound/soc/codecs/snd-soc-rk817.ko`。`modules` 已通过树内 Kconfig/Makefile 入口构建 codec；保留同次输出目录中的最终 `.config` 和 `Module.symvers`。
 
 ## 2. 构建 PatchX 设备树
 
-入口为 [rk3568-patchx.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx.dts)：
+产品入口为 [rk3568-patchx-product.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dts)，在原显示/音频入口上加入 OV5695 相机配置：
 
 ```sh
 make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
-    CROSS_COMPILE=aarch64-linux-gnu- rockchip/rk3568-patchx.dtb || exit 1
+    CROSS_COMPILE=aarch64-linux-gnu- rockchip/rk3568-patchx-product.dtb || exit 1
 ```
 
-成功后，产物位于 `$OUT/arch/arm64/boot/dts/rockchip/rk3568-patchx.dtb`。此处使用本分支的 Linux 5.10 板级配置。
+成功后，产物位于 `$OUT/arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dtb`。此处使用本分支的 Linux 5.10 板级配置。
 
-## 3. 构建 RK817 codec 模块
+## 构建完成后
 
-原配置关闭 `CONFIG_SND_SOC_RK817`，codec 通过 [独立模块 Makefile](../../tools/patchx/rk817-module.Makefile) 构建。复制本次源码中的 codec 文件，使用同一输出目录和 `Module.symvers`：
+上述命令成功后，应能找到以下产物：
+
+| 产物 | 位置 |
+| --- | --- |
+| 内核 Image | `$OUT/arch/arm64/boot/Image` |
+| PatchX DTB | `$OUT/arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dtb` |
+| RK817 codec 模块 | `$OUT/sound/soc/codecs/snd-soc-rk817.ko` |
+
+将最终配置、工具链版本和各产物校验值一起保存。Git 提交和工作树状态会影响内核 release 字符串，因此新分支构建出的 release 可能与原实机记录不同。使用同次构建的 Image 和模块，不要混用旧板上的模块或另一轮构建的符号表。
+
+## 历史构建入口
+
+原 [patchx_rk3568.config](../../arch/arm64/configs/patchx_rk3568.config) 和 [rk3568-patchx.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx.dts) 保留原显示/音频构建输入，旧设备树目标仍为 `rockchip/rk3568-patchx.dtb`。
+
+原配置关闭 `CONFIG_SND_SOC_RK817`，旧 codec 通过 [独立模块 Makefile](../../tools/patchx/rk817-module.Makefile) 构建。如需复现旧方式，应在另一个输出目录中使用原配置构建 Image，再复制 codec 文件，使用该旧配置输出目录及其 `Module.symvers`。以下命令中的 `OUT` 和 `BUILD_ROOT` 必须指向那次历史方式构建目录：
 
 ```sh
 CODEC_OUT="$BUILD_ROOT/rk817-module"
@@ -58,18 +74,6 @@ cp "$KERNEL_SRC/tools/patchx/rk817-module.Makefile" "$CODEC_OUT/Makefile" || exi
 make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
     CROSS_COMPILE=aarch64-linux-gnu- M="$CODEC_OUT" modules || exit 1
 ```
-
-## 构建完成后
-
-三步成功后，应能找到以下产物：
-
-| 产物 | 位置 |
-| --- | --- |
-| 内核 Image | `$OUT/arch/arm64/boot/Image` |
-| PatchX DTB | `$OUT/arch/arm64/boot/dts/rockchip/rk3568-patchx.dtb` |
-| RK817 codec 模块 | `$CODEC_OUT/snd-soc-rk817.ko` |
-
-将最终配置、工具链版本和各产物校验值一起保存。Git 提交和工作树状态会影响内核 release 字符串，因此新分支构建出的 release 可能与原实机记录不同。使用同次构建的 Image 和模块，不要混用旧板上的模块或另一轮构建的符号表。
 
 ## 启动适配
 

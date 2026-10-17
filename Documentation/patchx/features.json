@@ -74,6 +74,34 @@
         "api": "getrandom(1, GRND_NONBLOCK)"
       },
       "result": "Driver bound, CRNG ready and nonblocking calls succeeded before and after network transfer."
+    },
+    {
+      "id": "rk817-intree-module",
+      "date": "2026-10-11",
+      "conditions": {
+        "config": "CONFIG_SND_SOC_RK817=m",
+        "image": "original audio-v5 Image",
+        "module_sha256": "b862becedc3f0d9166ad9b49791e4745456aa91db9c26d0ed89dde8fe1a2439f"
+      },
+      "result": "In-tree module loaded with taint remaining zero; idle resource checks and application audio ownership setup completed. This does not establish a newly rebuilt full Image."
+    },
+    {
+      "id": "ov5695-camera",
+      "date": "2026-10-11",
+      "conditions": {
+        "reset_gpio_flags": 1,
+        "native_size": [
+          2592,
+          1944
+        ],
+        "mainpath_size": [
+          640,
+          480
+        ],
+        "format": "NV12",
+        "jpeg_path_requires": "matching RKAIQ runtime and module IQ inputs"
+      },
+      "result": "Sensor identified and finite capture completed. Later application requests returned two 640x480 JPEG images over loopback WebSocket; this does not establish Android-equivalent image quality or an online voice-and-camera session."
     }
   ],
   "source_record_sha256": {

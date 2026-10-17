@@ -1,6 +1,6 @@
 # 已验证功能
 
-以下结果来自 PatchX RK3568 板卡的实际运行记录。音频、USB 输入和显示记录于 2026-10-11；Wi-Fi 与 RNG 记录于 2026-10-04。各项使用对应的设备树、配置和运行环境，不能合并解释为同一套整机系统已经完成验收。
+以下结果来自 PatchX RK3568 板卡的实际运行记录。音频、USB 输入、显示、相机和树内 codec 记录于 2026-10-11；Wi-Fi 与 RNG 记录于 2026-10-04。各项使用对应的设备树、配置和运行环境，不能合并解释为同一套整机系统已经完成验收。
 
 内核基线为 Linux `5.10.160-rt89`。本分支驱动源码采用实际 audio-v5 构建使用的版本，源码入口见 [SOURCE_GUIDE.md](SOURCE_GUIDE.md)。
 
@@ -50,3 +50,17 @@ band=a
 ## 硬件随机数接口
 
 `fe388000.rng` 绑定 `rockchip-rng`，`rng_current=rockchip`。内核报告 CRNG 就绪，网络认证前后调用非阻塞 `getrandom(1, GRND_NONBLOCK)` 均成功。检查范围为驱动绑定和接口就绪。
+
+## 树内 RK817 codec 模块
+
+使用原内核树 `CONFIG_SND_SOC_RK817=m` 入口构建模块，实际在原 audio-v5 Image 上加载，插入前后内核 taint 均为 0。声卡初始三路为 OFF，空闲资源检查通过，随后完成产品音频 owner 装配。这次加载记录没有重新确认讲话输入或可听播放；上面的声音和 PCM 结果来自各自较早的运行记录。
+
+产品配置与原完整配置的差异只有 `CONFIG_SND_SOC_RK817` 从未设置改为 `m`。保留该次实际配置作为 `patchx_rk3568_product.config`。原 Image 没有因该模块构建而重编译。
+
+## OV5695 相机采集
+
+原 Linux 5.10 OV5695 驱动配合 `reset-gpios` flags=1，实际识别 `OV005695`，完成 DPHY 匹配和 ISP notifier。有限采集分别取得 2592×1944 NV12 和 640×480 NV12 的非空帧；每次丢弃两张预热帧，保存下一张有效帧，随后 STREAMOFF、解除映射和关闭成功，sensor 与 ISP 回到 runtime suspended。
+
+后续加入配套用户态 ISP 与 JPEG 编码后，两条原相机请求经真实 loopback WebSocket 返回 640×480 JPEG，分别为 27,353 和 27,947 字节，导出校验后查看未见整体发绿，仍存在亮区截断和色边。此结果覆盖有限拍照与回传，不表示 Android 3A 成像等价。
+
+本分支 `rk3568-patchx-product.dts` 生成的 DTB 与上述最终相机 pre-overlay DTB 做全量静态语义对照：983 个节点、4990 个属性、773 个 phandle 及 FDT 元数据全部相同。产品入口保留原显示/音频入口，再加入相机配置；本次发布未重新构建或启动完整产品 Image。来源及散列见 [SOURCE.json](SOURCE.json)。
