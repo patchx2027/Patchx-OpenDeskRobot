@@ -62,6 +62,8 @@ install -m 600 deploy/patchx/live.example.json "$HOME/.config/patchx/live.json"
 
 程序不会自动替换 URL 中的占位符。请将两个参数填成与 `voice.device_id` 相同的应用 SN，并对每个参数值进行 URL 编码（例如 `+` 写成 `%2B`、`&` 写成 `%26`）；`voice.client_id` 是另一个独立字段。带这两个参数的组合已完成语音验证，但对照试验未证明参数必需，见 [验证说明](ONLINE_VOICE.md#10-月-25-日验证了什么)。
 
+首次接入使用页面的单次说话按钮。网页的“连续对话”会改用 `auto`，不属于本次成功的 `realtime` 配置；不要将主机探针的三轮结果理解为网页连续对话已通过。
+
 上传格式保持 16 kHz 单声道、每包 60 ms 的 Opus。服务在本次 hello 中声明 24 kHz 输出，由客户端按协商结果解码；不需要将麦克风采样率改为 24 kHz。
 
 在 Bash 中输入本次运行的令牌，输入内容不会回显：
