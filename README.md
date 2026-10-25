@@ -19,7 +19,7 @@ Android 代码位于 [`software/android/`](software/android/README.md)。Linux �
 
 ### Linux 在线语音
 
-Linux 在线语音仍未完成完整对话：2026 年 10 月 11 日的测试能握手并上传音频，但没有得到识别结果和回复音频；已安装 Android 应用的另一服务目标则停在 TCP 建连超时。具体条件见[在线语音说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/software/linux/docs/ONLINE_VOICE.md)，这些记录不代表服务当前状态。
+2026 年 10 月 25 日，Linux 主机客户端使用 `ws://118.31.102.180:8360/` 完成文字和合成语音各三轮问答，收到正确答案及可解码音频。Linux 分支已更新对应配置示例；板端真实麦克风收音和扬声器播放尚未重新验收。具体条件见[在线语音说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/software/linux/docs/ONLINE_VOICE.md)，服务结果限定于当次测试条件。
 
 此前的 [`kernel` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/kernel)保留原内核发布版本。
 
