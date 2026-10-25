@@ -59,4 +59,4 @@ export ALSA_CONFIG_PATH="$PWD/deploy/patchx/alsa-rk3568.conf"
 
 有限板端记录确认 USB 8 通道接口的前四个逻辑通道有语音响应，应用选择其中通道 0；RK809 扬声器播放和有限 PCM 生命周期流程也已有验证。通道选择不代表波束形成或八个物理麦克风身份已确认。
 
-在线测试仍未完成识别到回答播放，详见 [在线语音与本地音频结果](../../docs/ONLINE_VOICE.md)。内核端的采集、播放验证范围见 [内核验证说明](../../../../Documentation/patchx/VALIDATION.md)。
+2026 年 10 月 25 日已完成主机合成语音输入、识别、正确回答与回复音频解码；尚未用这套服务配置验收板端真实收音和扬声器播放。详见 [在线语音与本地音频结果](../../docs/ONLINE_VOICE.md)。内核端的采集、播放验证范围见 [内核验证说明](../../../../Documentation/patchx/VALIDATION.md)。

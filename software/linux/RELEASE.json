@@ -270,7 +270,7 @@
     "root filesystem and system images",
     "account credentials and device authorization files"
   ],
-  "online_voice_status": "Unresolved. Historical 2026-10-11 trials are documented in docs/ONLINE_VOICE.md; no complete speech-recognition-answer-playback result is claimed.",
+  "online_voice_status": "On 2026-10-25, a host-side probe using the published transport, codec and hello validation completed three text turns and three synthetic-speech turns at ws://118.31.102.180:8360/, with correct answer text, decodable Opus and tts.stop. The complete application state machine and physical board capture/playback have not been accepted with this endpoint.",
   "published_files_sha256": [
     {
       "path": ".gitignore",
@@ -282,7 +282,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "29216b546f8d3fe8cd1b765625cf61303eee1c96ac6b431c60311b729f4598d1"
+      "sha256": "121e8507f510f987076b5869605a3ce0408cb4ed6c6df7b175b0c0196b27e81e"
     },
     {
       "path": "apps/companion/README.md",
@@ -394,7 +394,7 @@
     },
     {
       "path": "apps/patchx/README.md",
-      "sha256": "e0e96bcce368390bcf55fcc11c188211c25c2ad8318edefbdc557df6638cb826"
+      "sha256": "6cc5ea51cedfbb1580a1e23e0b7d2749d21765fe155aac710b923128c68c9542"
     },
     {
       "path": "apps/patchx/__init__.py",
@@ -462,7 +462,7 @@
     },
     {
       "path": "deploy/patchx/AUDIO.md",
-      "sha256": "aa6684971a3d614ef62a08d4af16759c84ed424c15c718efcaaaa7c3b1ec1fac"
+      "sha256": "a406473f9cdba056b15b055ede0a9bf69da85a4564a7892e2627aa5b72989808"
     },
     {
       "path": "deploy/patchx/alsa-rk3568.conf",
@@ -470,19 +470,19 @@
     },
     {
       "path": "deploy/patchx/live.example.json",
-      "sha256": "8458c0fff60cf8367aee1df7d785f83e9fb343b5ac848efec206999350f0dd42"
+      "sha256": "0825510d89a7527b3660b6176879a651ebd349ab68b78ec773da09d6ec058073"
     },
     {
       "path": "docs/CAMERA.md",
-      "sha256": "e301477a8c6b47c203336bbdf06e0b32efaa2498a7c5204b5ab7c249c3364c6d"
+      "sha256": "323688fa93c010c08a188889e17b1c7c9f3036de137db3424b6a2f70aac7d6e8"
     },
     {
       "path": "docs/GETTING_STARTED.md",
-      "sha256": "9c721e961eb3d8a75bfd9e5085101e508388d0f9929d28304abbb7ed493a1fdf"
+      "sha256": "bffdbff3151ea5c333cd08ae847af78b195162449b654dfa30a013ab70c1c91a"
     },
     {
       "path": "docs/ONLINE_VOICE.md",
-      "sha256": "2bc3fbd8c1aeea6207ab5362cd0a15d91e6661f5b64d3eed00ae7ca126ea9c53"
+      "sha256": "d7bae93e1c6b6eaea32267b9501a806223910d0c0bd1c911a0a6239507f80430"
     },
     {
       "path": "docs/TESTS.md",
@@ -684,5 +684,27 @@
       "path": "tools/run-host-fixtures.py",
       "sha256": "5e3ce5f3b5738a4510825e52f12516f38035eb2010b2bee2b644208a0ff9b8b6"
     }
-  ]
+  ],
+  "updated_date": "2026-10-25",
+  "voice_endpoint_update": {
+    "date": "2026-10-25",
+    "configuration": "deploy/patchx/live.example.json",
+    "base_url": "ws://118.31.102.180:8360/",
+    "listen_mode": "realtime",
+    "websocket_heartbeat": false,
+    "allow_insecure_ws": true,
+    "identity_values_published": false,
+    "core_application_sources_changed": false,
+    "existing_evidence": {
+      "summary_sha256": "f8310449aaa7771758655af392eff1e9dde451739cd742901226c43b91aaa969",
+      "text_probe_receipt_sha256": "d5f5e42ecefa58ec309c882b7dece5412a191514cda65da7c9e8814071720722",
+      "synthetic_speech_probe_receipt_sha256": "80a7618098f3c23c45e484c04009d8189484ea9e1ce43f5f9ef17e40569f8967",
+      "text_turns": 3,
+      "synthetic_speech_turns": 3,
+      "decode_errors": 0,
+      "physical_board_used": false,
+      "full_application_accepted": false
+    },
+    "new_network_or_hardware_trials_during_publication": false
+  }
 }

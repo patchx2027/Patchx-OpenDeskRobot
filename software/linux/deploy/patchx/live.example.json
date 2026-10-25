@@ -4,7 +4,7 @@
     "voice_backend": "android",
     "bind": "127.0.0.1",
     "port": 8090,
-    "backend_url": "wss://example.invalid/patchx",
+    "backend_url": "ws://118.31.102.180:8360/?device_id=REPLACE_WITH_SERVICE_DEVICE_ID&user_id=REPLACE_WITH_SERVICE_DEVICE_ID",
     "token_env": "PATCHX_VOICE_TOKEN",
     "device_id": "REPLACE_WITH_SERVICE_DEVICE_ID",
     "client_id": "REPLACE_WITH_SERVICE_CLIENT_ID",
@@ -13,7 +13,8 @@
     "listen_mode": "realtime",
     "websocket_heartbeat": false,
     "capture_device": "patchx_capture",
-    "playback_device": "patchx_playback"
+    "playback_device": "patchx_playback",
+    "allow_insecure_ws": true
   },
   "patchx": {
     "client_ip": "192.0.2.10",

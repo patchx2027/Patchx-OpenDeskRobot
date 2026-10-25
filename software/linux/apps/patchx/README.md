@@ -2,7 +2,7 @@
 
 面向 RK3568 的产品入口，复用 Companion 的语音状态机、WebSocket 和浏览器服务，在同一非实时事件线程处理兼容 Android 1.0.1 的业务消息。
 
-首次使用请从 [安装与配置教程](../../docs/GETTING_STARTED.md) 开始。**在线语音尚未完成完整往返验证**，已观察到的问题与心跳修正见 [在线语音状态](../../docs/ONLINE_VOICE.md)。
+首次使用请从 [安装与配置教程](../../docs/GETTING_STARTED.md) 开始。2026 年 10 月 25 日，已验证配置在主机上完成文字和合成语音各三轮问答；板端真实收音、播放尚未验收。配置和历史问题见 [在线语音状态](../../docs/ONLINE_VOICE.md)。
 
 从 `software/linux` 运行：
 

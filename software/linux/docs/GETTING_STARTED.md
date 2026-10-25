@@ -33,7 +33,7 @@ python3 -m apps.patchx --config apps/patchx/demo.json
 
 ## 配置在线服务
 
-先阅读 [在线语音状态](ONLINE_VOICE.md)。发布源码中的在线连接能力不等于已有可用的公共语音服务。
+先阅读 [在线语音状态](ONLINE_VOICE.md)。模板采用 2026 年 10 月 25 日已通过主机问答验证的 `8360` 服务配置；使用者仍需具备该服务的使用授权，并填写自己的有效身份和令牌。
 
 将模板复制到仓库外：
 
@@ -42,23 +42,27 @@ install -d -m 700 "$HOME/.config/patchx"
 install -m 600 deploy/patchx/live.example.json "$HOME/.config/patchx/live.json"
 ```
 
-用编辑器修改这份本地 JSON。模板中的示例值必须替换，硬件开关先保持关闭。`example.invalid` 不指向实际服务，`192.0.2.10` 是文档示例地址，不能用作本机 IP。
+用编辑器修改这份本地 JSON。服务地址已填写，设备、客户端标识和 IP 仍是占位值，必须替换。MQTT 的 `example.invalid` 不指向实际服务，`192.0.2.10` 不能用作本机 IP。`patchx.audio_enabled=false` 只表示不启用 RK809 板级音频适配；live 模式仍可能通过通用音频路径打开配置设备。若只想看界面而不接触设备，请使用 demo。
 
 | 配置项 | 填写内容 |
 | --- | --- |
 | `voice.mode` | `live` |
 | `voice.voice_backend` | `android`，表示当前实现的兼容协议 |
-| `voice.backend_url` | 你有权使用的 WebSocket 服务地址，优先 `wss://`；地址中不放凭据 |
-| `voice.device_id` | 服务方认可的应用设备标识；不能任意把板卡硬件序列号当作已登记身份 |
+| `voice.backend_url` | 模板使用 `ws://118.31.102.180:8360/`；将 URL 中 `device_id`、`user_id` 占位值替换为同一应用 SN 的 URL 编码结果，令牌不放入 URL |
+| `voice.device_id` | 与两个 URL 参数相同的应用 SN，这里填未做 URL 编码的原值；不能任意把板卡硬件序列号当作已登记身份 |
 | `voice.client_id` | 服务方要求的客户端标识 |
 | `voice.token_env` | `PATCHX_VOICE_TOKEN`，这里只填写环境变量名 |
-| `voice.listen_mode` | 模板使用 `realtime` 对齐所提供 Android 源码；按自己的服务协议选择 |
+| `voice.listen_mode` | 保持本次成功组合的 `realtime` |
 | `voice.websocket_heartbeat` | 模板保持 `false`，见 [心跳说明](ONLINE_VOICE.md#主动心跳的修正) |
 | `patchx.client_ip` | 板端当前实际 IP，必须是有效 IP 字面量 |
 
 布尔值使用 JSON 的 `true` / `false`，不能写成字符串。字段定义分别见 [Companion 配置](../apps/companion/config.py) 和 [PatchX 配置](../apps/patchx/config.py)。
 
-如果服务只提供明文 `ws://`，需显式设置 `voice.allow_insecure_ws=true`；这会让连接内容失去 TLS 保护，应由服务部署条件决定。
+模板已显式设置 `voice.allow_insecure_ws=true`，因为已验证地址使用明文 `ws://`。身份、令牌和音频没有 TLS 保护；更换为自己的 `wss://` 服务时可设回 `false`。
+
+程序不会自动替换 URL 中的占位符。请将两个参数填成与 `voice.device_id` 相同的应用 SN，并对每个参数值进行 URL 编码（例如 `+` 写成 `%2B`、`&` 写成 `%26`）；`voice.client_id` 是另一个独立字段。带这两个参数的组合已完成语音验证，但对照试验未证明参数必需，见 [验证说明](ONLINE_VOICE.md#10-月-25-日验证了什么)。
+
+上传格式保持 16 kHz 单声道、每包 60 ms 的 Opus。服务在本次 hello 中声明 24 kHz 输出，由客户端按协商结果解码；不需要将麦克风采样率改为 24 kHz。
 
 在 Bash 中输入本次运行的令牌，输入内容不会回显：
 
