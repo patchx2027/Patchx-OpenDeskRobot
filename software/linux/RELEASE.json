@@ -382,7 +382,7 @@
     },
     {
       "path": "apps/patchx/README.md",
-      "sha256": "3f1ebe9fcf7cbf674cff52e80f980e8f568a27577097ff235a5a347f26e5b1c7"
+      "sha256": "9af29f4ef8167b33441400b59b9c32f2fe826686f9b60a4ffe21bebf2d01a801"
     },
     {
       "path": "apps/patchx/__init__.py",
@@ -475,6 +475,10 @@
     {
       "path": "docs/GETTING_STARTED.md",
       "sha256": "c393f6c985c1cfa79fb4a8c4213cbc27106620908aeb4b2ff3bb8b30f21b236b"
+    },
+    {
+      "path": "docs/MOTOR_NATIVE_LINUX.md",
+      "sha256": "c77e078a32bde54dd38e77491c8fed6fdebc2759cb0b4ba8650e577fb2df12ad"
     },
     {
       "path": "docs/ONLINE_VOICE.md",
@@ -755,6 +759,25 @@
     ],
     "hardware_evidence": "2026-11-12 RK3568 Android 11 UART0 and temporary ARM64 Linux userspace. Motor power disconnected. 165/165 OTA replies with corrected GD32F503 firmware; restart and image readback verified.",
     "powered_motion_verified": false,
-    "motor_firmware_included": false
+    "motor_firmware_included": false,
+    "native_linux_verification": {
+      "date": "2026-11-14",
+      "application_commit": "085354ac55b373d879d3316a9532af3eea71bf9c",
+      "kernel_release": "5.10.160-rt89-g9f9e9d18574d-dirty",
+      "serial_port": "/dev/ttyS0",
+      "uart_mmio": "0xfdd50000",
+      "baud": 115200,
+      "protocol_revision": 1,
+      "firmware_version": "TO_G-2026.10.27-01",
+      "axis_state_count": 6,
+      "pd_readback_count": 6,
+      "active_fault": {
+        "axis_index": 1,
+        "code": 3
+      },
+      "app_http_status": 200,
+      "app_exit_code": 0,
+      "report": "docs/MOTOR_NATIVE_LINUX.md"
+    }
   }
 }

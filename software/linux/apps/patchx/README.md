@@ -40,6 +40,8 @@ python3 -m apps.patchx --config apps/patchx/demo.json
 
 ## GD32F503 电机控制
 
+本板的原生 Linux 串口已确认是 `/dev/ttyS0`。六轴查询及正式入口的实测结果见 [RK3568 原生 Linux 电机板联调](../../docs/MOTOR_NATIVE_LINUX.md)。
+
 
 在 live 配置中把 `patchx.motor_port` 设为已核实的串口绝对路径，例如 `/dev/ttyS0`。11 月 12 日的实板 UART0 联调运行在 Android 11，设备节点为 `/dev/ttySMT0`。默认空值表示禁用。连接使用 115200 8N1，要求板端支持新版 `0x6B`（revision 1）。启动只同步序号水位、就绪、故障和轴状态。连接恢复后由调用方重新请求运动。
 
