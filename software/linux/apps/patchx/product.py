@@ -7,8 +7,9 @@ from .protocol import image_message, listen_mode_message, parse_business
 
 class PatchXCompanion(Companion):
     def __init__(self, voice_config, business, camera_backend=None, camera_timeout_s=45.0,
-                 display_service=None, **factories):
+                 display_service=None, motor_controller=None, **factories):
         self.display = display_service
+        self.motor = motor_controller
         self.audio_cleanup_uncertain = False
         super().__init__(voice_config, **factories)
         self.business = business
@@ -95,6 +96,8 @@ class PatchXCompanion(Companion):
                 raise RuntimeError("PatchX display startup failed")
             if self.camera is not None and not self.camera.start():
                 raise RuntimeError("PatchX camera startup failed")
+            if self.motor is not None:
+                self.motor.start()
             super().start()
             self._display_update()
             if self.mqtt is not None and not self.mqtt.start():
@@ -122,6 +125,11 @@ class PatchXCompanion(Companion):
                         errors.append(name)
                 except Exception:
                     errors.append(name)
+        if self.motor is not None:
+            try:
+                self.motor.close()
+            except RuntimeError:
+                errors.append("motor")
         if not mqtt_closed:
             errors.append("MQTT")
         if self.audio_cleanup_uncertain:
@@ -181,6 +189,8 @@ class PatchXCompanion(Companion):
         result = super().snapshot()
         result["patchx"] = self.business.snapshot()
         result["patchx"]["audio_cleanup_uncertain"] = self.audio_cleanup_uncertain
+        if self.motor is not None:
+            result["patchx"]["motor"] = self.motor.snapshot()
         if self.camera is not None:
             result["patchx"]["camera_worker"] = self.camera.snapshot()
         if self.mqtt is not None:

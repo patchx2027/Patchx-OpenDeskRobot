@@ -54,7 +54,7 @@ software/linux/tests/         应用测试源码
 
 内核的声音、显示、USB 采集、Wi-Fi、随机数和相机结果见[实测说明](Documentation/patchx/VALIDATION.md)。用户程序包含业务消息、二维表情、软件音量、背光、MQTT 和相机请求处理，具体接线及启用方法见[用户程序说明](software/linux/README.md)。
 
-相机成像需要匹配的 RKAIQ 和模组 IQ 参数。当前辅助程序保留实测版本校验；自行重建后需要按[相机说明](software/linux/docs/CAMERA.md)重新适配。语音使用 USB 逻辑通道 0，没有复现原 Android 的 CAE、阵列 AEC 或离线唤醒。自动电机端口仍未启用。
+相机成像需要匹配的 RKAIQ 和模组 IQ 参数。当前辅助程序保留实测版本校验；自行重建后需要按[相机说明](software/linux/docs/CAMERA.md)重新适配。语音使用 USB 逻辑通道 0，没有复现原 Android 的 CAE、阵列 AEC 或离线唤醒。GD32F503 串口控制和 OTA 工具已提供，串口默认留空。接线、操作和实测范围见[电机板接入](software/linux/apps/patchx/README.md#gd32f503-电机控制)。
 
 ## 来源与许可
 

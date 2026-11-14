@@ -13,6 +13,7 @@
 | 连接 USB 麦克风与 RK809 扬声器 | [板端音频](deploy/patchx/AUDIO.md) |
 | 编译相机 helper 和准备外部依赖 | [相机说明](docs/CAMERA.md) |
 | 阅读业务消息和硬件开关 | [PatchX 应用](apps/patchx/README.md) |
+| 联调 GD32F503 电机板、查看状态或执行 OTA | [电机板接入](apps/patchx/README.md#gd32f503-电机控制) |
 | 阅读语音状态机、WebSocket 和 HTTP 服务 | [Companion 公共模块](apps/companion/README.md) |
 | 构建内核与设备树 | [内核构建说明](../../Documentation/patchx/BUILD.md) |
 

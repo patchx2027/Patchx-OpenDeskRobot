@@ -8,7 +8,7 @@ import re
 from apps.companion.config import validate
 
 DEFAULTS = {"client_ip": "", "backlight_enabled": False, "backlight_path": "",
-            "display_enabled": False, "display_device": "/dev/fb0",
+            "display_enabled": False, "display_device": "/dev/fb0", "motor_port": "",
             "audio_enabled": False, "volume_initial": 8,
             "camera_enabled": False, "camera_program": "", "camera_work_dir": "",
             "camera_timeout_s": 45.0, "mqtt_enabled": False, "mqtt_broker": "",
@@ -29,7 +29,7 @@ def validate_product(values):
     for key in ("backlight_enabled", "display_enabled", "audio_enabled", "camera_enabled", "mqtt_enabled", "mqtt_tls"):
         if type(product[key]) is not bool:
             raise ValueError(key + " must be boolean")
-    for key in ("client_ip", "backlight_path", "display_device", "camera_program", "camera_work_dir"):
+    for key in ("client_ip", "backlight_path", "display_device", "camera_program", "camera_work_dir", "motor_port"):
         value = product[key]
         if not isinstance(value, str) or len(value) > 2048 or any(c in value for c in "\r\n\x00"):
             raise ValueError("invalid " + key)
@@ -38,13 +38,15 @@ def validate_product(values):
             ipaddress.ip_address(product["client_ip"])
         except ValueError:
             raise ValueError("invalid client_ip") from None
-    for key in ("backlight_path", "display_device", "camera_program", "camera_work_dir"):
+    for key in ("backlight_path", "display_device", "camera_program", "camera_work_dir", "motor_port"):
         if product[key] and not os.path.isabs(product[key]):
             raise ValueError(key + " must be absolute")
     if product["backlight_enabled"] and (voice["mode"] != "live" or not product["backlight_path"]):
         raise ValueError("backlight requires live mode and an explicit absolute path")
     if product["display_enabled"] and (voice["mode"] != "live" or not product["display_device"]):
         raise ValueError("display requires live mode and an explicit absolute device")
+    if product["motor_port"] and voice["mode"] != "live":
+        raise ValueError("motor_port requires live mode")
     if type(product["volume_initial"]) is not int or not 0 <= product["volume_initial"] <= 15:
         raise ValueError("volume_initial must be 0..15")
     if product["audio_enabled"] and (voice["mode"] != "live" or voice.get("aec_enabled")):

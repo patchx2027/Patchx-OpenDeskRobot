@@ -60,7 +60,7 @@ class Runtime:
 
 def create_runtime(config, audio_factory=None, codec_factory=None, transport_factory=None,
                    http_address=None, camera_backend=None, display_service=None,
-                   audio_route=None, volume_port=None):
+                   audio_route=None, volume_port=None, motor_controller=None):
     """Assemble once; embedded callers may request an ephemeral loopback HTTP port."""
     config = validate_product(config)
     voice, settings = config["voice"], config["patchx"]
@@ -75,6 +75,9 @@ def create_runtime(config, audio_factory=None, codec_factory=None, transport_fac
             def audio_factory(config, on_error=None):
                 return PatchXAudioIO(config, on_error, speaker_route=audio_route, volume=volume_port)
     business = PatchXBusiness(backlight=backlight, volume=volume_port)
+    if motor_controller is None and settings["motor_port"]:
+        from .motor import MotorController
+        motor_controller = MotorController(settings["motor_port"])
     if display_service is None and settings["display_enabled"]:
         from .display import DisplayService
         display_service = DisplayService(settings["display_device"])
@@ -89,7 +92,7 @@ def create_runtime(config, audio_factory=None, codec_factory=None, transport_fac
     core = PatchXCompanion(voice, business, audio_factory=audio_factory or AudioIO,
                           codec_factory=codec_factory or OpusCodec, transport_factory=transport_factory,
                           camera_backend=camera_backend, camera_timeout_s=settings["camera_timeout_s"],
-                          display_service=display_service)
+                          display_service=display_service, motor_controller=motor_controller)
     if settings["mqtt_enabled"]:
         core.configure_mqtt(broker=settings["mqtt_broker"], port=settings["mqtt_port"], tls=settings["mqtt_tls"],
             device_id=voice["device_id"], env_names={"username": settings["mqtt_username_env"],

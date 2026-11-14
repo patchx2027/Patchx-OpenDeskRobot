@@ -34,6 +34,7 @@
     "mqtt_tls": true,
     "mqtt_username_env": "PATCHX_MQTT_USERNAME",
     "mqtt_password_env": "PATCHX_MQTT_PASSWORD",
-    "mqtt_client_id_env": "PATCHX_MQTT_CLIENT_ID"
+    "mqtt_client_id_env": "PATCHX_MQTT_CLIENT_ID",
+    "motor_port": ""
   }
 }

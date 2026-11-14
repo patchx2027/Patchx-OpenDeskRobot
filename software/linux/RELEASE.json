@@ -120,10 +120,6 @@
       "sha256": "4ce60b4e87ad6ce1918114b79e615a56de5cdef803169506803125da737518c9"
     },
     {
-      "path": "apps/patchx/__main__.py",
-      "sha256": "62060f3ac795554590318941753ea27bb2066d5c296793187e1952f7440d754f"
-    },
-    {
       "path": "apps/patchx/audio.py",
       "sha256": "407a0a173d24b2bd3fe7e913bddd88ce0db9691fa45cf1337fbe738705a8f280"
     },
@@ -134,10 +130,6 @@
     {
       "path": "apps/patchx/camera.py",
       "sha256": "5755c8c102ed4e876fd004fd7f32a8110e8378fd1250bc78869c0f7d8fc135a4"
-    },
-    {
-      "path": "apps/patchx/config.py",
-      "sha256": "706106246245868065a7632ff9c454cf0490a0d6e159a75cfae1479b95edbf3f"
     },
     {
       "path": "apps/patchx/demo.json",
@@ -158,10 +150,6 @@
     {
       "path": "apps/patchx/mqtt.py",
       "sha256": "6c2c85dbd34c260ca261755633410fe7880c3ae5124ec341d78353d61f269abc"
-    },
-    {
-      "path": "apps/patchx/product.py",
-      "sha256": "a880b282071fa9fc07987bfdf36a62977191701b47f9ef2dfa908baad2156b1b"
     },
     {
       "path": "apps/patchx/protocol.py",
@@ -282,7 +270,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "121e8507f510f987076b5869605a3ce0408cb4ed6c6df7b175b0c0196b27e81e"
+      "sha256": "d97a7779b48ee60f29ee7bf8d60cd24ac54d1857551f13497afb9f40e8c1da97"
     },
     {
       "path": "apps/companion/README.md",
@@ -394,7 +382,7 @@
     },
     {
       "path": "apps/patchx/README.md",
-      "sha256": "6cc5ea51cedfbb1580a1e23e0b7d2749d21765fe155aac710b923128c68c9542"
+      "sha256": "3f1ebe9fcf7cbf674cff52e80f980e8f568a27577097ff235a5a347f26e5b1c7"
     },
     {
       "path": "apps/patchx/__init__.py",
@@ -402,7 +390,7 @@
     },
     {
       "path": "apps/patchx/__main__.py",
-      "sha256": "62060f3ac795554590318941753ea27bb2066d5c296793187e1952f7440d754f"
+      "sha256": "5e26a7c1b89b4580dae9f80d5bafc3883de82579982b5886712bc4e6ac6f1501"
     },
     {
       "path": "apps/patchx/audio.py",
@@ -418,7 +406,7 @@
     },
     {
       "path": "apps/patchx/config.py",
-      "sha256": "706106246245868065a7632ff9c454cf0490a0d6e159a75cfae1479b95edbf3f"
+      "sha256": "1fc088f85bcecfe5d44b4a74c65bddcee575fe84dafcb9990e648d2ef2404763"
     },
     {
       "path": "apps/patchx/demo.json",
@@ -437,12 +425,20 @@
       "sha256": "2b112d495cc56b7da73d9641053cbc626b9bff7875a25c275488e7f408390705"
     },
     {
+      "path": "apps/patchx/motor.py",
+      "sha256": "0c8bbbfadc189410389f5d0dd00eede57a7a4e4d710dab776d10c7ca782455a7"
+    },
+    {
+      "path": "apps/patchx/motor_ota.py",
+      "sha256": "80f9ed69900530b7706c151af183aa9e8e11fb84dea6e392da0ac10b3146fad8"
+    },
+    {
       "path": "apps/patchx/mqtt.py",
       "sha256": "6c2c85dbd34c260ca261755633410fe7880c3ae5124ec341d78353d61f269abc"
     },
     {
       "path": "apps/patchx/product.py",
-      "sha256": "a880b282071fa9fc07987bfdf36a62977191701b47f9ef2dfa908baad2156b1b"
+      "sha256": "94c72d3a23e30e076949028a96d2531b520b0070ff00ba9bc86e293d475c54dc"
     },
     {
       "path": "apps/patchx/protocol.py",
@@ -470,7 +466,7 @@
     },
     {
       "path": "deploy/patchx/live.example.json",
-      "sha256": "0825510d89a7527b3660b6176879a651ebd349ab68b78ec773da09d6ec058073"
+      "sha256": "57199f05016c03ae200df603e0146225af7adc7fea941c6ec6de9482f67f499b"
     },
     {
       "path": "docs/CAMERA.md",
@@ -478,7 +474,7 @@
     },
     {
       "path": "docs/GETTING_STARTED.md",
-      "sha256": "1b801be397e0f27c563978bde22ea94af8f56fe00e3785c5bdbfae2100564779"
+      "sha256": "c393f6c985c1cfa79fb4a8c4213cbc27106620908aeb4b2ff3bb8b30f21b236b"
     },
     {
       "path": "docs/ONLINE_VOICE.md",
@@ -527,6 +523,14 @@
     {
       "path": "tests/test_patchx_isp_capture.py",
       "sha256": "d0612fd2c516289defaecf734af3ef03906d2b55a00587dab756445e2b813b01"
+    },
+    {
+      "path": "tests/test_patchx_motor.py",
+      "sha256": "1bc91490e308f2c140e8be7d6a167032c26c40a7b57d1feac79d2beb94ca9ecc"
+    },
+    {
+      "path": "tests/test_patchx_motor_ota.py",
+      "sha256": "eab7fe19156ec64574d559081b1e78d4cc1fcdca6e505d8ba2b911f68f200cec"
     },
     {
       "path": "tests/test_patchx_mqtt.py",
@@ -685,7 +689,7 @@
       "sha256": "5e3ce5f3b5738a4510825e52f12516f38035eb2010b2bee2b644208a0ff9b8b6"
     }
   ],
-  "updated_date": "2026-10-25",
+  "updated_date": "2026-11-14",
   "voice_endpoint_update": {
     "date": "2026-10-25",
     "configuration": "deploy/patchx/live.example.json",
@@ -706,5 +710,51 @@
       "full_application_accepted": false
     },
     "new_network_or_hardware_trials_during_publication": false
+  },
+  "motor_update": {
+    "source_commits": [
+      "70de8269b2db1985074c716a4136e1bc8af71f78",
+      "f6f775c3fc2b8cea11c9442a1599e600e504183c"
+    ],
+    "source_files": [
+      {
+        "path": "apps/patchx/motor.py",
+        "sha256": "0c8bbbfadc189410389f5d0dd00eede57a7a4e4d710dab776d10c7ca782455a7",
+        "source": "committed"
+      },
+      {
+        "path": "apps/patchx/motor_ota.py",
+        "sha256": "80f9ed69900530b7706c151af183aa9e8e11fb84dea6e392da0ac10b3146fad8",
+        "source": "committed"
+      },
+      {
+        "path": "apps/patchx/__main__.py",
+        "sha256": "5e26a7c1b89b4580dae9f80d5bafc3883de82579982b5886712bc4e6ac6f1501",
+        "source": "working_tree"
+      },
+      {
+        "path": "apps/patchx/config.py",
+        "sha256": "1fc088f85bcecfe5d44b4a74c65bddcee575fe84dafcb9990e648d2ef2404763",
+        "source": "working_tree"
+      },
+      {
+        "path": "apps/patchx/product.py",
+        "sha256": "94c72d3a23e30e076949028a96d2531b520b0070ff00ba9bc86e293d475c54dc",
+        "source": "working_tree"
+      },
+      {
+        "path": "tests/test_patchx_motor.py",
+        "sha256": "1bc91490e308f2c140e8be7d6a167032c26c40a7b57d1feac79d2beb94ca9ecc",
+        "source": "committed"
+      },
+      {
+        "path": "tests/test_patchx_motor_ota.py",
+        "sha256": "eab7fe19156ec64574d559081b1e78d4cc1fcdca6e505d8ba2b911f68f200cec",
+        "source": "committed"
+      }
+    ],
+    "hardware_evidence": "2026-11-12 RK3568 Android 11 UART0 and temporary ARM64 Linux userspace. Motor power disconnected. 165/165 OTA replies with corrected GD32F503 firmware; restart and image readback verified.",
+    "powered_motion_verified": false,
+    "motor_firmware_included": false
   }
 }
