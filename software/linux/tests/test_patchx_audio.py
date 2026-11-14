@@ -296,16 +296,16 @@ class MixerFixture:
 
 
 class SpeakerRouteTests(unittest.TestCase):
-    def test_all_off_spk_and_restoration_verify_all_controls(self):
+    def test_all_off_hp_no_mic_and_restoration_verify_all_controls(self):
         fixture = MixerFixture()
         route = RK809SpeakerRoute(runner=fixture)
         self.assertEqual(fixture.calls, [])
         self.assertTrue(route.acquire())
-        self.assertEqual(fixture.values["Playback Path"], 2)
+        self.assertEqual(fixture.values["Playback Path"], 4)
         self.assertTrue(route.release())
         self.assertTrue(route.release())
         self.assertEqual(set(fixture.values.values()), {0})
-        self.assertEqual([call[-1] for call in fixture.calls if call[3] == "cset"], ["SPK", "OFF"])
+        self.assertEqual([call[-1] for call in fixture.calls if call[3] == "cset"], ["HP_NO_MIC", "OFF"])
         self.assertFalse(route.snapshot()["cleanup_uncertain"])
 
     def test_bad_control_or_nonoff_baseline_writes_nothing(self):
@@ -320,7 +320,7 @@ class SpeakerRouteTests(unittest.TestCase):
 
     def test_failed_enable_latches_even_if_cached_off_verifies(self):
         fixture = MixerFixture()
-        fixture.fail_on = "SPK"
+        fixture.fail_on = "HP_NO_MIC"
         route = RK809SpeakerRoute(runner=fixture)
         with self.assertRaises(common.AudioError):
             route.acquire()

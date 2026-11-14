@@ -27,7 +27,7 @@
     "sound/core/pcm_dmaengine.c": "189e4e4fb59a683ae050e96fbe90f7fc09d5ad7afe755d3eca6623fbb971da77",
     "sound/core/pcm_memory.c": "cb883d943072d36c8b3d7f881f89b641c683597412014fcb7fe391f30cf0d4f4",
     "sound/core/pcm_native.c": "bc34db0aabe8b523172403a4095afeac5544434e15a05884ca99f6b77d48c47d",
-    "sound/soc/codecs/rk817_codec.c": "7dea894bf067486a5fe0a3a8f1a241bdabebef3327a1bf732044b8bba8f2bcdf",
+    "sound/soc/codecs/rk817_codec.c": "07db6ebb918682e136c59a62c0466ca4e18f18c900e9b8089b0df664eea84c00",
     "sound/soc/generic/simple-card-utils.c": "1cc6583e7573809ecc2c7df0602a27d9404c9d59adfee083a73f706ef76f65c4",
     "sound/soc/rockchip/rockchip_i2s_tdm.c": "b987171f222e3644a2df9a95499ee55d2bccd54770d6f5a4dd89f7f944aabe25",
     "sound/soc/soc-component.c": "ea81b958a6cdf035a29de112e07f15f55f774d4f67a02b68ca1eae6c0ce5d85c",
@@ -93,7 +93,7 @@
       }
     }
   },
-  "scope": "Kernel driver source matches the audio-v5 inputs. Product additions retain the actual in-tree codec configuration and reconstruct the final camera device tree. DT semantic comparison is static artifact verification, not a new complete Image build or whole-product acceptance. Individual board observations and conditions are documented in VALIDATION.md.",
+  "scope": "Kernel driver source derives from the audio-v5 inputs with the 3568A RK817 amplifier adaptation. Product additions retain the actual in-tree codec configuration and reconstruct the final camera device tree. DT semantic comparison is static artifact verification, not a new complete Image build or whole-product acceptance. Individual board observations and conditions are documented in VALIDATION.md.",
   "product_config": {
     "path": "arch/arm64/configs/patchx_rk3568_product.config",
     "sha256": "d4170c250b3c45dc1879fcd0cd25335213f71dc8e4cb312c1383d764345d0952",

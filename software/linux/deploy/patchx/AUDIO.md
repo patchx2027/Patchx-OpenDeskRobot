@@ -51,7 +51,7 @@ export ALSA_CONFIG_PATH="$PWD/deploy/patchx/alsa-rk3568.conf"
 
 播放音量为 0–15，实际 PCM 幅度乘以 `raw / 15`：0 静音，15 保持原幅度。它不修改麦克风增益，也不代表 RK809 模拟增益或 Android 的分贝档位。
 
-`RK809SpeakerRoute` 核对 `Playback Path`、`Capture MIC Path` 和 `Resume Path` 的枚举内容，要求初始均为 OFF。播放前取得 SPK 路由，PCM 子进程回收后恢复 OFF 并读回。共享声卡被其他程序使用时应先处理占用。
+`RK809SpeakerRoute` 核对 `Playback Path`、`Capture MIC Path` 和 `Resume Path` 的枚举内容，要求初始均为 OFF。播放前取得 HP_NO_MIC 路由，PCM 子进程回收后恢复 OFF 并读回。共享声卡被其他程序使用时应先处理占用。
 
 停止会分别尝试结束采集、打断播放并等待工作线程。无法确认子进程或设备已释放时，应用保留资源所有权并拒绝新一轮连接。用户态超时不构成内核阻塞调用的硬期限。
 
@@ -62,3 +62,4 @@ export ALSA_CONFIG_PATH="$PWD/deploy/patchx/alsa-rk3568.conf"
 有限板端记录确认 USB 8 通道接口的前四个逻辑通道有语音响应，应用选择其中通道 0；RK809 扬声器播放和有限 PCM 生命周期流程也已有验证。通道选择不代表波束形成或八个物理麦克风身份已确认。
 
 2026 年 10 月 25 日已完成主机合成语音输入、识别、正确回答与回复音频解码；尚未用这套服务配置验收板端真实收音和扬声器播放。详见 [在线语音与本地音频结果](../../docs/ONLINE_VOICE.md)。内核端的采集、播放验证范围见 [内核验证说明](../../../../Documentation/patchx/VALIDATION.md)。
+3568A 需要本分支带板级功放适配的 RK817 驱动。旧板 RAM 启动复测覆盖了 PatchX 本地播放、路由选择和功放关闭，见 [实机音频记录](../../../../docs/RK3568-AUDIO-VERIFICATION.md)。

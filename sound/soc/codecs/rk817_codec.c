@@ -1587,6 +1587,20 @@ static int rk817_hw_params(struct snd_pcm_substream *substream,
 	return ret < 0 ? ret : 0;
 }
 
+/* The 3568A external amp is fed by the codec's headphone outputs. */
+static bool rk817_3568a_hp_uses_spk_ctl(void)
+{
+	struct device_node *root = of_find_node_by_path("/");
+	const char *model;
+	bool matches = false;
+
+	if (!of_property_read_string(root, "model", &model))
+		matches = !strcmp(model, "3568A Linux reconstruction - Wi-Fi candidate") ||
+			  !strcmp(model, "3568A Linux reconstruction - firstboot candidate");
+	of_node_put(root);
+	return matches;
+}
+
 static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
 {
 	struct snd_soc_component *component = dai->component;
@@ -1669,7 +1683,9 @@ static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
 					PWD_DACL_ON | PWD_DACR_ON);
 			if (ret < 0)
 				goto err_mute;
-			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK, 0);
+			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK,
+					     rk817->playback_path == HP_NO_MIC &&
+					     rk817_3568a_hp_uses_spk_ctl());
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
 			break;
 		case SPK_HP:

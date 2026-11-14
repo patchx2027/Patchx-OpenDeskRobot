@@ -134,16 +134,16 @@ class RK809SpeakerRoute:
             self._active = True
             self._changed = True
             try:
-                self._call("cset", "Playback Path", "SPK")
+                self._call("cset", "Playback Path", "HP_NO_MIC")
                 after = self._all()
-                if after != {"Playback Path": 2, "Capture MIC Path": 0, "Resume Path": 0}:
-                    raise AudioError("RK809 SPK route did not verify")
+                if after != {"Playback Path": self.CONTROLS["Playback Path"].index("HP_NO_MIC"), "Capture MIC Path": 0, "Resume Path": 0}:
+                    raise AudioError("RK809 HP_NO_MIC route did not verify")
                 return True
             except Exception as error:
                 self.cleanup_uncertain = True
                 self.last_error = str(error)
                 self.release()
-                raise AudioError("RK809 SPK route could not be established") from error
+                raise AudioError("RK809 HP_NO_MIC route could not be established") from error
 
     def release(self):
         with self._lock:

@@ -394,7 +394,7 @@
     },
     {
       "path": "apps/patchx/audio.py",
-      "sha256": "407a0a173d24b2bd3fe7e913bddd88ce0db9691fa45cf1337fbe738705a8f280"
+      "sha256": "650cad96476d89d7eb17afe75ddc3972737039ebdd2eb64ba33647e2c3bf1772"
     },
     {
       "path": "apps/patchx/business.py",
@@ -458,7 +458,7 @@
     },
     {
       "path": "deploy/patchx/AUDIO.md",
-      "sha256": "740a7eb031e1e360d68b1d8eaf59a208cdfae3a1e29b231d884693b47e32b43d"
+      "sha256": "7c083a829238662d6b4f32531a0c32ac78f4f02a29124c418485fb6af1cc155e"
     },
     {
       "path": "deploy/patchx/alsa-rk3568.conf",
@@ -498,7 +498,7 @@
     },
     {
       "path": "tests/test_patchx_audio.py",
-      "sha256": "506b62817d4bfc0d1753b1b6d6e9c1d6468d3e79d65955298a97652426d65595"
+      "sha256": "86b0a6c74c3e8623e3d79601a7fc8394dafb817347ea6b2505d9bf2f88ac9866"
     },
     {
       "path": "tests/test_patchx_audio_integration.py",
