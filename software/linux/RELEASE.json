@@ -270,7 +270,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "d97a7779b48ee60f29ee7bf8d60cd24ac54d1857551f13497afb9f40e8c1da97"
+      "sha256": "64bd34ba6db45a9f8146a177c4c17b0023a1da9da4291a6855bc15cf97583e81"
     },
     {
       "path": "apps/companion/README.md",
@@ -382,7 +382,7 @@
     },
     {
       "path": "apps/patchx/README.md",
-      "sha256": "9af29f4ef8167b33441400b59b9c32f2fe826686f9b60a4ffe21bebf2d01a801"
+      "sha256": "839d59e81f7aa049dc779a6a73b058f992052f7348cc689c10fdef6f73551d48"
     },
     {
       "path": "apps/patchx/__init__.py",
@@ -458,7 +458,7 @@
     },
     {
       "path": "deploy/patchx/AUDIO.md",
-      "sha256": "7c083a829238662d6b4f32531a0c32ac78f4f02a29124c418485fb6af1cc155e"
+      "sha256": "3d3d8cbf1808d5903d3b242a188194bb544b681d8343d048734c3f486f0a3f59"
     },
     {
       "path": "deploy/patchx/alsa-rk3568.conf",
