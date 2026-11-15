@@ -124,7 +124,7 @@ rk809_sound
 
 从声卡的两个 `sound-dai` 出发，能找到 I2S、codec，以及它们各自的时钟和引脚组，就读清了这段连接。
 
-这里说明 Android 4.19 的现有连接。Linux 5.10 checked 音频路径还有配对属性及固定参数要求，按 [Linux 驱动说明](../drivers/linux-5.10/README.md) 集成。
+这里说明 Android 4.19 的现有连接。
 
 <a id="pins"></a>
 

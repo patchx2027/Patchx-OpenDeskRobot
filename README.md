@@ -1,8 +1,6 @@
 # PatchX OpenDeskRobot
 
-PatchX 是一个桌面机器人项目。`android` 分支提供 Android 应用源码和设备树参考。新的 [Linux 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/linux)提供完整内核、板级设备树、Linux 用户程序和原生辅助工具。
-
-Android 代码位于 [`software/android/`](software/android/README.md)。Linux 的功能、配置和实测结果见 [Linux 说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/README.md)。
+本分支提供 PatchX 桌面机器人的 Android 应用源码、构建配置和 RK3568 设备树参考。应用入口在 [`software/android/`](software/android/README.md)。原生 Linux 发行版见 [`linux` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/linux)。
 
 ## 从哪里开始
 
@@ -12,23 +10,15 @@ Android 代码位于 [`software/android/`](software/android/README.md)。Linux �
 | --- | --- | --- |
 | 了解 Android 应用如何组织 | [Android 工程说明](software/android/README.md) | 应用入口和对应功能的 Java 代码 |
 | 调整屏幕亮度、时序或硬件接线 | [设备树教程](hardware/rk3568/device-tree/GUIDE.md) | 教程对应的 `board/` 文件 |
-| 阅读或修改 Linux 驱动 | [驱动源码导航](hardware/rk3568/drivers/linux-5.10/README.md) | 进入 Linux 分支，按功能读源码和构建教程 |
 | 准备编译 Android 应用 | [构建前准备](software/android/README.md#构建前准备) | 先核对第三方依赖，再填写本地配置 |
 
-本分支设备树参考使用 Android 4.19，Linux 分支使用 Linux 5.10。开始修改前，先确认自己使用的内核版本。
-
-### Linux 在线语音
-
-旧版 3568A 已在原生 Linux 上使用 `8360` 完成一次实麦流式对话。当前配置和验证范围见[在线语音说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/software/linux/docs/ONLINE_VOICE.md)。
-
-Linux 内核源码和板级配置随 [`linux` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/linux)维护，编译入口见[内核构建说明](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/Documentation/patchx/BUILD.md)。
+本分支的设备树参考对应原厂 Android 4.19。
 
 ### 文档索引
 
 - [Android 工程说明与构建准备](software/android/README.md)
 - [RK3568 设备树](hardware/rk3568/device-tree/README.md)
 - [设备树阅读与修改教程](hardware/rk3568/device-tree/GUIDE.md)
-- [RK3568 Linux 驱动与验证记录](hardware/rk3568/drivers/linux-5.10/README.md)
 - [第三方依赖与待补输入](software/android/docs/THIRD_PARTY.md)
 - [发布范围、来源与验证状态](software/android/docs/RELEASE_STATUS.md)
 
@@ -36,7 +26,7 @@ Linux 内核源码和板级配置随 [`linux` 分支](https://github.com/patchx2
 
 ```text
 software/android/     Android 应用源码、资源与构建配置
-hardware/rk3568/       Android 设备树参考与 Linux 内核源码入口
+hardware/rk3568/       Android 设备树参考
 LICENSE               第一方代码的 MIT 许可证
 qr-group.png          微信讨论群二维码
 ```

@@ -34,7 +34,7 @@ dtc -i . -I dts -O dtb \
 
 [GUIDE.md](GUIDE.md) 从现有配置出发，介绍默认亮度、720×720 屏时序、声音连线，以及电压、GPIO 和 pinctrl 元组的读法。示例使用当前配置值；修改时以器件资料和板卡接线为准。
 
-这是 Android 4.19 的硬件参考；Linux 5.10 驱动集成的参数与设备树要求见 [驱动说明](../drivers/linux-5.10/README.md)。
+这是 Android 4.19 的硬件参考。
 
 ## 来源与许可
 
