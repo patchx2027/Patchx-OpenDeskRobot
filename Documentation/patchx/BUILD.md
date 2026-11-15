@@ -36,7 +36,7 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
 
 ## 2. 构建 PatchX 设备树
 
-产品入口为 [rk3568-patchx-product.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dts)，在原显示/音频入口上加入 OV5695 相机配置：
+产品入口为 [rk3568-patchx-product.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dts)，组合供电、显示、音频、联网和 OV5695 相机配置：
 
 ```sh
 make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
@@ -56,24 +56,6 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
 | RK817 codec 模块 | `$OUT/sound/soc/codecs/snd-soc-rk817.ko` |
 
 将最终配置、工具链版本和各产物校验值一起保存。Git 提交和工作树状态会影响内核 release 字符串，因此新分支构建出的 release 可能与原实机记录不同。使用同次构建的 Image 和模块，不要混用旧板上的模块或另一轮构建的符号表。
-
-## 历史构建入口
-
-原 [patchx_rk3568.config](../../arch/arm64/configs/patchx_rk3568.config) 和 [rk3568-patchx.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx.dts) 保留原显示/音频构建输入，旧设备树目标仍为 `rockchip/rk3568-patchx.dtb`。
-
-原配置关闭 `CONFIG_SND_SOC_RK817`，旧 codec 通过 [独立模块 Makefile](../../tools/patchx/rk817-module.Makefile) 构建。如需复现旧方式，应在另一个输出目录中使用原配置构建 Image，再复制 codec 文件，使用该旧配置输出目录及其 `Module.symvers`。以下命令中的 `OUT` 和 `BUILD_ROOT` 必须指向那次历史方式构建目录：
-
-```sh
-CODEC_OUT="$BUILD_ROOT/rk817-module"
-mkdir "$CODEC_OUT" || exit 1
-cp "$KERNEL_SRC/sound/soc/codecs/rk817_codec.c" "$CODEC_OUT/" || exit 1
-cp "$KERNEL_SRC/sound/soc/codecs/rk817_codec.h" "$CODEC_OUT/" || exit 1
-cp "$KERNEL_SRC/tools/patchx/rk817-module.Makefile" "$CODEC_OUT/Makefile" || exit 1
-[ -s "$OUT/Module.symvers" ] || exit 1
-
-make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
-    CROSS_COMPILE=aarch64-linux-gnu- M="$CODEC_OUT" modules || exit 1
-```
 
 ## 准备启动环境
 

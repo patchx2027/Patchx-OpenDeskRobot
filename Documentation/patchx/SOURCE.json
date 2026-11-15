@@ -37,62 +37,6 @@
     "sound/soc/soc-generic-dmaengine-pcm.c": "794bccb85fde6094cbd3b1dcaf8f3d5bce6ae5c4c342047658c2934525b6724c",
     "sound/soc/soc-pcm.c": "5bae1c377b848238b5f75a18fcbb17a924064898cc9638489f866987db252586"
   },
-  "config": {
-    "path": "arch/arm64/configs/patchx_rk3568.config",
-    "sha256": "1268f3061ecf94e063d8785010a793cc7edaaf0d61d29d6c29887a9dccfed912"
-  },
-  "device_tree": {
-    "entry": "arch/arm64/boot/dts/rockchip/rk3568-patchx.dts",
-    "reference_dtb_sha256": "98595cf813d7755de52ad0b35867f154f5fa0ab6b0309064fe2ef4e4b281bb33",
-    "source_files": {
-      "rk3568-patchx-audio.dtsi": {
-        "bytes": 1879,
-        "sha256": "1c824e629d22af5dc814c0b870e5cbca6de16e2595163d7fdc2fdc026d3e48e5",
-        "lines": 63
-      },
-      "rk3568-patchx-base.dtsi": {
-        "bytes": 3047,
-        "sha256": "f55c0a7529010b4669afcce41d7881efb12f1ca57310a9a166418eccb32882a2",
-        "lines": 101
-      },
-      "rk3568-patchx-connectivity.dtsi": {
-        "bytes": 1717,
-        "sha256": "e023d68b586bca236fa518c21b3e46ed70690db1965dec59a4c32e17a1461f50",
-        "lines": 63
-      },
-      "rk3568-patchx-display.dtsi": {
-        "bytes": 4554,
-        "sha256": "f930dfba66251f9253386721d8a178de96b583e2a60a613b52cec9d4087a5065",
-        "lines": 125
-      },
-      "rk3568-patchx-panel-init.dtsi": {
-        "bytes": 4436,
-        "sha256": "bee287b6cd88911f091357a5958833f7959438480822fb7da6225660e88962c5",
-        "lines": 189
-      },
-      "rk3568-patchx-phandles.dtsi": {
-        "bytes": 29097,
-        "sha256": "c5e97f9668b67c96e48cd2b9bbcf77ce193789c18b3e7fe77067ecd9d19b258f",
-        "lines": 776
-      },
-      "rk3568-patchx-power.dtsi": {
-        "bytes": 11650,
-        "sha256": "03fb8f69c5fe83cde9628cfaff10a30221a6005449b251c89051f70bea659ee8",
-        "lines": 343
-      },
-      "rk3568-patchx.dts": {
-        "bytes": 812,
-        "sha256": "70631633219f27f2f18aae9b7a908bd935b0919104b03e8e48569c5b15b2bf63",
-        "lines": 23
-      }
-    },
-    "archived_reference_semantic_comparison": {
-      "equal": true,
-      "nodes": 972,
-      "properties": 4946,
-      "metadata_equal": true
-    }
-  },
   "scope": "Kernel driver source derives from the audio-v5 inputs. The product device tree now declares the HP_NO_MIC amplifier wiring. Archived semantic comparisons refer to the pre-property DTB sources; source hashes describe the current tree. Product peripheral support is summarized in the root README.md; build scope is documented in BUILD.md.",
   "product_config": {
     "path": "arch/arm64/configs/patchx_rk3568_product.config",
@@ -147,14 +91,9 @@
         "lines": 343
       },
       "rk3568-patchx-product.dts": {
-        "bytes": 195,
-        "sha256": "f6d3bb39babc62d72994b4f362aa94894213685cf9ffc5f4ee1d9c856b83fcd8",
-        "lines": 4
-      },
-      "rk3568-patchx.dts": {
-        "bytes": 812,
-        "sha256": "70631633219f27f2f18aae9b7a908bd935b0919104b03e8e48569c5b15b2bf63",
-        "lines": 23
+        "bytes": 851,
+        "sha256": "3c801d3ebc98eedd8c39f0b5065dd72d14a0b3a45dee25c7ba605e3e47895bc3",
+        "lines": 25
       }
     },
     "archived_reference_semantic_comparison": {

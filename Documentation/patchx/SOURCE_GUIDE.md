@@ -20,13 +20,12 @@
 
 ## 设备树文件怎么分工
 
-产品入口及其板级文件都在 `arch/arm64/boot/dts/rockchip/`。从入口看 include 顺序，再按要改的功能打开对应文件；同一节点的后续属性会覆盖先前设置。
+产品入口包含与 loader 配套的内存保留区及板级文件的引入顺序。相关文件都在 `arch/arm64/boot/dts/rockchip/`。从入口看 include 顺序，再按要改的功能打开对应文件；同一节点的后续属性会覆盖先前设置。
 
 | 文件 | 先看哪里 | 适合在这里修改的内容 |
 | --- | --- | --- |
 | [rk3568-patchx-product.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dts) | 原入口与相机 include | 产品功能组合 |
 | [rk3568-patchx-camera.dtsi](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-camera.dtsi) | OV5695、固定电源、DPHY 与 ISP endpoint | 相机接线、有效电平和数据链路 |
-| [rk3568-patchx.dts](../../arch/arm64/boot/dts/rockchip/rk3568-patchx.dts) | `/memreserve/` 和 include 顺序 | 板级文件组合、与 loader 配套的保留区 |
 | [rk3568-patchx-base.dtsi](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-base.dtsi) | `memory@200000`、`chosen`、USB 与存储节点 | 内存布局、启动参数及基础控制器配置 |
 | [rk3568-patchx-power.dtsi](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-power.dtsi) | `vcc3v3_sys`、`vcc5v0_host`、`rk809` | 供电连接和电压约束 |
 | [rk3568-patchx-connectivity.dtsi](../../arch/arm64/boot/dts/rockchip/rk3568-patchx-connectivity.dtsi) | `sdio_pwrseq`、`wireless_wlan`、`&sdmmc1` | SDIO、Wi-Fi 供电和唤醒引脚 |
@@ -83,7 +82,7 @@ enable-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
 
 ## 阅读相机配置
 
-产品入口在原显示/音频配置后引入 `rk3568-patchx-camera.dtsi`。OV5695 位于 I2C2，地址 `0x36`，沿两条 CSI2 data lane 连接 DPHY0，再到 RKISP virtual channel 0。相机固定电源使能使用 GPIO0_D5 高有效，启动等待 20000 微秒；复位使用 GPIO3_D4 低有效，PWDN 使用 GPIO3_D5 低有效。
+产品设备树引入 `rk3568-patchx-camera.dtsi`。OV5695 位于 I2C2，地址 `0x36`，沿两条 CSI2 data lane 连接 DPHY0，再到 RKISP virtual channel 0。相机固定电源使能使用 GPIO0_D5 高有效，启动等待 20000 微秒；复位使用 GPIO3_D4 低有效，PWDN 使用 GPIO3_D5 低有效。
 
 设备树中的 `reset-gpios` 有效电平与当前 Linux 5.10 `ov5695.c` 的上下电逻辑配合；产品入口采用实测的 flags=1。保留 SDK 原传感器驱动及时序。端点的显式 phandle 及注释对应最后实测的 pre-overlay 设备树，便于逐属性核对。
 
