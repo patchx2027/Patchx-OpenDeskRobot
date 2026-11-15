@@ -21,7 +21,26 @@ getprop sys.boot_completed
 ip -4 -o addr show dev wlan0
 ```
 
-没有 IPv4 地址时，在旧板 Android 的 Wi‑Fi 设置里选择电脑所在的 SSID，按现场要求输入密码或完成认证。电脑走网线时，选择能和电脑互通的同一局域网。访客网络可能拦截设备之间的访问。
+### 首次从串口连接 Wi‑Fi
+
+先在电脑的网络设置里记下当前 Wi‑Fi 的名称（SSID）。电脑走网线时，选与电脑处于同一可互访局域网的无线网络。访客网络可能隔离设备。
+
+在 Android 串口执行：
+
+```sh
+su 0 svc wifi enable
+su 0 cmd wifi start-scan
+sleep 5
+su 0 cmd wifi list-scan-results
+```
+
+从结果里按 SSID 找目标网络。安全标记含 `PSK` 的 WPA2 个人网络用 `wpa2`，仅支持 WPA3 Personal（`SAE`）的网络用 `wpa3`。例如连接 WPA2：
+
+```sh
+su 0 cmd wifi connect-network '目标 SSID' wpa2 'Wi-Fi 密码'
+```
+
+用实际值替换引号里的示例。先关闭串口日志记录，再输入密码。连接请求提交后，用 `su 0 cmd wifi status` 核对连接的 SSID，用 `ip -4 -o addr show dev wlan0` 确认已取得地址，再按第 3 节验证 ADB。若固件缺少 `connect-network`，或目标网络需要企业账号或网页认证，请用 Android 的 Wi‑Fi 设置完成连接。
 
 如果板卡已保存目标网络，只是 Wi‑Fi 被关闭，可以在支持 `su 0` 的原厂开发环境从串口开启 Wi‑Fi，然后等待 DHCP：
 
