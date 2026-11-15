@@ -26,6 +26,4 @@ git clone --branch linux --single-branch \
 
 - [运行演示和配置板端程序](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/software/linux/docs/GETTING_STARTED.md)
 - [相机工具构建与接入](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/software/linux/docs/CAMERA.md)
-- [在线语音问题与配置要求](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/software/linux/docs/ONLINE_VOICE.md)：10 月 25 日主机文字和合成语音问答已通过，板端真实录放音尚未验收。
-
-旧的 [`kernel` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/kernel)保留此前的内核版本。
+- [在线语音配置与实测](https://github.com/patchx2027/Patchx-OpenDeskRobot/blob/linux/software/linux/docs/ONLINE_VOICE.md)
