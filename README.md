@@ -4,6 +4,12 @@ PatchX RK3568 桌面机器人的 Linux 源码。本分支提供完整内核、�
 
 Android 应用源码在 [`android` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/android)。
 
+## RK3568 主控
+
+RK3568 是瑞芯微的 64 位片上系统，采用四核 Arm Cortex-A55，集成 Mali-G52 GPU、NPU、图像信号处理器和视频编解码模块。PatchX 使用该平台运行 Android 或 ARM64 Linux，设备树描述主板上的显示、相机和音频接线。机器人实际接入和 Linux 已支持的功能见下方[外设与接入](#外设与接入)。
+
+[瑞芯微 RK3568 产品页](https://www.rock-chips.com/a/en/products/RK35_Series/2021/0113/1276.html) · [RK3568 芯片简版数据手册](https://www.rock-chips.com/uploads/pdf/2022.8.26/192/RK3568%20Brief%20Datasheet.pdf)
+
 ## 在线语音状态
 
 旧版 3568A 已在原生 Linux 上使用 `8360` 服务完成一次实麦流式对话。现场自然说完并停顿后听清了正确回复「12」。测试未保存录音。
