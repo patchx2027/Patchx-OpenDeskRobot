@@ -16,13 +16,11 @@ GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1]
 
 | 想做什么 | 入口 |
 | --- | --- |
-| 在电脑上先运行演示 | [用户程序入门](software/linux/docs/GETTING_STARTED.md) |
-| 配置在线语音和板上设备 | [用户程序说明](software/linux/README.md)、[在线语音](software/linux/docs/ONLINE_VOICE.md) |
-| 修改业务消息、表情、声音或相机处理 | [PatchX 应用](software/linux/apps/patchx/README.md) |
-| 修改内核驱动、供电、显示或相机接线 | [内核与设备树阅读指南](Documentation/patchx/SOURCE_GUIDE.md) |
-| 编译内核、设备树和 RK817 模块 | [内核构建](Documentation/patchx/BUILD.md) |
-| 构建相机、JPEG 和原生辅助工具 | [相机接入](software/linux/docs/CAMERA.md)、[原生工具](software/linux/tools/README.md) |
-| 查看依赖及需要自备的厂商输入 | [第三方依赖](software/linux/docs/THIRD_PARTY.md) |
+| 运行演示，修改语音、表情或电机逻辑 | [PatchX 用户程序](software/linux/README.md) |
+| 修改驱动或设备树，构建 Image、模块和 DTB | [内核与设备树指南](Documentation/patchx/SOURCE_GUIDE.md) · [内核构建](Documentation/patchx/BUILD.md) |
+| 组装旧版 3568A 的临时 RAM 启动包 | [旧板 RAM 启动包](Documentation/patchx/RAM_BOOT.md) |
+
+仓库根目录的 `README` 是内核说明，本页是 PatchX 产品入口。
 
 ```sh
 git clone --branch linux --single-branch \
@@ -52,7 +50,7 @@ software/linux/tests/         应用测试源码
 
 ## 功能与实测范围
 
-内核的声音、显示、USB 采集、Wi-Fi、随机数和相机结果见[实测说明](Documentation/patchx/VALIDATION.md)。用户程序包含业务消息、二维表情、软件音量、背光、MQTT 和相机请求处理，具体接线及启用方法见[用户程序说明](software/linux/README.md)。
+内核功能见[实测说明](Documentation/patchx/VALIDATION.md)，跨系统录放音和 H8 接线对照见[音频实测](Documentation/patchx/RK3568-AUDIO-VERIFICATION.md)。用户程序包含业务消息、二维表情、软件音量、背光、MQTT 和相机请求处理，具体接线及启用方法见[用户程序说明](software/linux/README.md)。
 
 相机成像需要匹配的 RKAIQ 和模组 IQ 参数。当前辅助程序保留实测版本校验；自行重建后需要按[相机说明](software/linux/docs/CAMERA.md)重新适配。语音使用 USB 逻辑通道 0，没有复现原 Android 的 CAE、阵列 AEC 或离线唤醒。GD32F503 串口控制和 OTA 工具已提供，串口默认留空。接线、操作和实测范围见[电机板接入](software/linux/apps/patchx/README.md#gd32f503-电机控制)。
 

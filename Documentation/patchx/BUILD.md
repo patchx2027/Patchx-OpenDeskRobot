@@ -88,8 +88,7 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
 
 内核模块安装在 `$ROOTFS/lib/modules/<kernel.release>/`。把该目录加入目标 Linux 根文件系统，并在需要加载模块的阶段提供模块依赖索引。启动环境还需提供与板卡匹配的 loader、早期用户空间和完整的 Linux 根文件系统，以及所用外设的固件。
 
-旧板的 RAM 测试包由板卡专用启动链组装。组装时以同一轮构建的 Image、产品 DTB 和模块为输入，核对 `include/config/kernel.release`；若启动脚本校验 release 或散列，也按新产物更新。选择 RAM 启动后，验收应包括启动产物身份、播放期间功放使能、播放结束后回到 OFF，以及重启回原厂 Android。
-
+旧版 3568A 的独立打包命令、输入要求和 loader 参数见 [旧板 RAM 启动包](RAM_BOOT.md)。
 
 本设备树保留实测 RAM 启动链的内存布局。把产物接入自己的 loader 时，同时查看入口 DTS 和 `rk3568-patchx-base.dtsi`：
 
@@ -102,6 +101,6 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
 
 更换 loader 或 Image、initramfs、FDT 的装载地址时，要重新核对这些范围，避免覆盖保留区或相互重叠。
 
-`chosen` 中使用 `rdinit=/init`，需要配套提供包含 `/init` 的 initramfs，并由它完成所需文件系统挂载和 rootfs 启动。本构建步骤只生成内核、DTB 和模块。
+`chosen` 中使用 `rdinit=/init`，需要配套提供包含 `/init` 的 initramfs，并由它完成所需文件系统挂载和 rootfs 启动。Image、DTB 和模块可交给 RAM 启动包组装入口。
 
 生成的 DTB 对应 pre-overlay 基树。若启动链还会应用 overlay，应核对其内容和应用次数；屏幕、音频等已写入这份源码的配置，不要再通过同内容的合成 overlay 重复应用。

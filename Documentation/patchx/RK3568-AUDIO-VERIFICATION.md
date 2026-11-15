@@ -46,6 +46,6 @@
 | 播放中 | HP_NO_MIC | RUNNING | 低，功放使能 |
 | 播放后 | OFF | closed | 高，功放关闭 |
 
-播放器无错误，PatchX 释放扬声器所有权，探针退出 0。音频单元与集成测试共 23 项通过。验证范围为旧板的本地 PCM 播放，旧板后续已通过一次实麦流式云端对话，见 [在线语音记录](../software/linux/docs/ONLINE_VOICE.md)。新板原生 Linux 听感待验收。
+播放器无错误，PatchX 释放扬声器所有权，探针退出 0。音频单元与集成测试共 23 项通过。验证范围为旧板的本地 PCM 播放，旧板后续已通过一次实麦流式云端对话，见 [在线语音记录](../../software/linux/docs/ONLINE_VOICE.md)。新板原生 Linux 听感待验收。
 
 [Android 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/android) · [Linux 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/linux)

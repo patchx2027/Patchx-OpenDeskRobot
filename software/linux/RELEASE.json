@@ -458,7 +458,7 @@
     },
     {
       "path": "deploy/patchx/AUDIO.md",
-      "sha256": "7064dd39344556f6440f071f0d2d6a552c0443fff7817f3b0a3f4f5d19b0ec4e"
+      "sha256": "43e787722ee1a797a79a4d4e54e150b7050c4db6c48a88e7644435468d5b9c7c"
     },
     {
       "path": "deploy/patchx/alsa-rk3568.conf",
