@@ -1,0 +1,83 @@
+{
+  "contract_version": 1,
+  "uart": {
+    "baud": 115200,
+    "data_bits": 8,
+    "parity": "none",
+    "stop_bits": 1,
+    "frames": [
+      {
+        "name": "legacy_welcome",
+        "command": 5,
+        "payload_hex": "",
+        "frame_hex": "ffff00010553b055aa"
+      },
+      {
+        "name": "legacy_angle",
+        "command": 250,
+        "payload_hex": "ff9c",
+        "frame_hex": "ffff0003faff9cec4555aa"
+      },
+      {
+        "name": "revision_query",
+        "command": 107,
+        "payload_hex": "1234",
+        "frame_hex": "ffff00036b1234ef5855aa"
+      },
+      {
+        "name": "revision_reply",
+        "command": 107,
+        "payload_hex": "123400010064",
+        "frame_hex": "ffff00076b1234000100644d7355aa"
+      }
+    ]
+  },
+  "voice": {
+    "headers": {
+      "Protocol-Version": "1",
+      "Device-Id": "fixture-device",
+      "Client-Id": "fixture-client"
+    },
+    "client_hello": {
+      "type": "hello",
+      "version": 1,
+      "transport": "websocket",
+      "device_id": "fixture-device",
+      "client_ip": "192.0.2.8",
+      "trace_id": "00000000-0000-4000-8000-000000000001",
+      "audio_params": {
+        "format": "opus",
+        "sample_rate": 16000,
+        "channels": 1,
+        "frame_duration": 60
+      }
+    },
+    "server_hello": {
+      "type": "hello",
+      "session_id": "fixture-session",
+      "audio_params": {
+        "format": "opus",
+        "sample_rate": 16000,
+        "channels": 1,
+        "frame_duration": 60
+      }
+    },
+    "listen_start": {
+      "type": "listen",
+      "state": "start",
+      "mode": "realtime",
+      "session_id": "fixture-session"
+    },
+    "tts_start": {
+      "type": "tts",
+      "state": "start",
+      "session_id": "fixture-session"
+    },
+    "tts_stop": {
+      "type": "tts",
+      "state": "stop",
+      "session_id": "fixture-session"
+    },
+    "opus_packet_hex": "5802f9304dbb0de5e392098938ebcae1b1d1dd85"
+  }
+}

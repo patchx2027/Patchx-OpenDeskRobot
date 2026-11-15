@@ -8,6 +8,8 @@
 
 Open-source desktop robot project for technical discussion, Q&A, and iteration.
 
+[共享协议 v1 / Shared protocol v1](protocol/v1/README.md)
+
 ## 加入我们 / Join Us
 
 微信扫码加入群聊，二维码 7 天内（9 月 23 日前）有效，重新进入可更新。
