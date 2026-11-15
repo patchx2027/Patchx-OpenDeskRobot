@@ -55,7 +55,7 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
 | PatchX DTB | `$OUT/arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dtb` |
 | RK817 codec 模块 | `$OUT/sound/soc/codecs/snd-soc-rk817.ko` |
 
-将最终配置、工具链版本和各产物校验值一起保存。Git 提交和工作树状态会影响内核 release 字符串，因此新分支构建出的 release 可能与原实机记录不同。使用同次构建的 Image 和模块，不要混用旧板上的模块或另一轮构建的符号表。
+将最终配置、工具链版本和各产物校验值一起保存。Git 提交和工作树状态会影响内核 release 字符串，因此新分支构建出的 release 可能与原实机记录不同。使用同次构建的 Image 和模块，Image、模块和符号表应来自同一轮构建。
 
 ## 准备启动环境
 
@@ -70,7 +70,7 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
 
 内核模块安装在 `$ROOTFS/lib/modules/<kernel.release>/`。把该目录加入目标 Linux 根文件系统，并在需要加载模块的阶段提供模块依赖索引。启动环境还需提供与板卡匹配的 loader、早期用户空间和完整的 Linux 根文件系统，以及所用外设的固件。
 
-旧版 3568A 的独立打包命令、输入要求和 loader 参数见 [旧板 RAM 启动包](RAM_BOOT.md)。
+3568A 的独立打包命令、输入要求和 loader 参数见 [Linux RAM 启动包](RAM_BOOT.md)。
 
 本设备树保留实测 RAM 启动链的内存布局。把产物接入自己的 loader 时，同时查看入口 DTS 和 `rk3568-patchx-base.dtsi`：
 

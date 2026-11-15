@@ -2,7 +2,7 @@
 
 这里提供 PatchX 的 Python 应用、浏览器界面和 RK3568 板级适配源码。Python 命令均从本目录 `software/linux` 执行；内核、设备树和内核构建说明在仓库根目录。
 
-旧版 3568A 已在原生 Linux 上通过 `8360` 完成一次实麦流式 ASR → LLM → TTS。现场自然说完停顿后听清正确回复，测试未保存录音。 配置与实测范围见 [在线语音说明](docs/ONLINE_VOICE.md)。
+3568A 测试板已在原生 Linux 上通过 `8360` 完成一次实麦流式 ASR → LLM → TTS。现场自然说完停顿后听清正确回复，测试未保存录音。 配置与实测范围见 [在线语音说明](docs/ONLINE_VOICE.md)。
 
 ## 从哪里开始
 
@@ -16,7 +16,8 @@
 | 联调 GD32F503 电机板、查看状态或执行 OTA | [电机板接入](apps/patchx/README.md#gd32f503-电机控制) |
 | 阅读语音状态机、WebSocket 和 HTTP 服务 | [Companion 公共模块](apps/companion/README.md) |
 | 构建内核与设备树 | [内核构建说明](../../Documentation/patchx/BUILD.md) |
-| 让 PatchX 随旧板 RAM Linux 启动 | [应用部署与自启动](../../Documentation/patchx/RAM_APP.md) |
+| PatchX App 手动启动 | [手动启动说明](docs/GETTING_STARTED.md) · [Python 入口](apps/patchx/__main__.py) |
+| PatchX App 自动启动 | [部署与随 RAM Linux 自启动](../../Documentation/patchx/RAM_APP.md) · [自启动代码](deploy/patchx/ram/init) |
 
 安装依赖后，可先运行：
 

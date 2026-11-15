@@ -8,7 +8,7 @@
 
 临时切换系统需要用调试串口进入 U-Boot。
 
-![旧版 3568A 主板与 USB 转串口适配器的接线实物](3568a-debug-uart-wiring.jpg)
+![3568A 主板与 USB 转串口适配器的接线实物](3568a-debug-uart-wiring.jpg)
 
 准备 Linux 或 WSL 主机、ADB 和板卡调试串口。实测串口为 1500000、8N1、无流控。先确认能看到 Android 与 U-Boot 的串口输出，且设备拥有读取原厂分区的授权。下列命令以原厂 Android 的 ADB shell 支持 `su 0` 为例。在多设备环境设置 `ANDROID_SERIAL` 后再执行。主机命令示例使用 Bash。
 
@@ -34,7 +34,7 @@ git clone --branch linux --single-branch https://github.com/patchx2027/Patchx-Op
 cd Patchx-OpenDeskRobot
 ```
 
-按[内核构建](BUILD.md)执行旧板产品配置对应的 Image、modules 和 DTB 构建，保留同一个 shell 中的 `OUT` 和 `BUILD_ROOT`。打包另需 Python 3.9 或更新版本、`device-tree-compiler`（提供 `fdtoverlay` 和 `fdtget`）、GNU cpio 和 gzip。
+按[内核构建](BUILD.md)执行 3568A 产品配置对应的 Image、modules 和 DTB 构建，保留同一个 shell 中的 `OUT` 和 `BUILD_ROOT`。打包另需 Python 3.9 或更新版本、`device-tree-compiler`（提供 `fdtoverlay` 和 `fdtget`）、GNU cpio 和 gzip。
 
 已有兼容 initramfs 时可以直接使用。第一次验证建议先做可进串口的最小 initramfs。将 `BUSYBOX` 设为你准备好的静态 ARM64 BusyBox 的绝对路径。它须提供 `sh`、`mount`、`uname`、`setsid`、`cttyhack`、`sleep`、`insmod`、`cat`、`sync`、`reboot` 以及 `--install -s`。用 `file "$BUSYBOX"` 确认架构和静态链接。
 
@@ -119,4 +119,4 @@ bootm 20000000
 
 串口出现 `PATCHX_RAM_READY` 后，用 `uname -r` 与构建时的 `kernel.release` 核对。需要检查音频驱动时执行 `insmod /snd-soc-rk817.ko`，再用 `cat /proc/asound/cards` 查看声卡。测试结束，关闭运行的应用并卸载临时挂载。上述最小环境可以执行 `sync` 和 `reboot -f` 返回原厂 Android，看到 Android 启动后再清理本轮暂存的普通文件。
 
-使用 2026 年 11 月 15 日实测的同组输入，打包入口生成了与旧板实测包逐字节一致的文件，CRC32 为 `9f9ec0e9`。每次应比对本轮输出的 CRC32。使用该次产品配置，旧板已完成 RAM 启动、PatchX 本地播放和重启返回原厂 Android。外设接入见[产品首页](../../README.md#外设与接入)。
+使用 2026 年 11 月 15 日实测的同组输入，打包入口生成了与 3568A 测试板实测包逐字节一致的文件，CRC32 为 `9f9ec0e9`。每次应比对本轮输出的 CRC32。使用该次产品配置，3568A 测试板已完成 RAM 启动、PatchX 本地播放和重启返回原厂 Android。外设接入见[产品首页](../../README.md#外设与接入)。

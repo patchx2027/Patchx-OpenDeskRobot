@@ -270,7 +270,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "a5d11830d81975874c4f1eb6c60cd5d7e752e0ce730d6deffb142ea13ccfb363"
+      "sha256": "99cbb0dd35cdfffd20fc5cc8db3ad921ab7b416d4b7fa258b1455991fe8b36dd"
     },
     {
       "path": "apps/companion/README.md",
@@ -382,7 +382,7 @@
     },
     {
       "path": "apps/patchx/README.md",
-      "sha256": "839d59e81f7aa049dc779a6a73b058f992052f7348cc689c10fdef6f73551d48"
+      "sha256": "7d168156a8707856ea0715e95cd02f6e26b00f248b90f2202f66148a53acf940"
     },
     {
       "path": "apps/patchx/__init__.py",
@@ -458,7 +458,7 @@
     },
     {
       "path": "deploy/patchx/AUDIO.md",
-      "sha256": "a605f37a54060247d79ee4a04799f2297127144f531ef7250dbba99cdb99c337"
+      "sha256": "fe7f6f78283c98d9f32984acfb1e36ed42f6bafc770a58eddb6a357286869e90"
     },
     {
       "path": "deploy/patchx/alsa-rk3568.conf",
@@ -486,11 +486,11 @@
     },
     {
       "path": "docs/CAMERA.md",
-      "sha256": "5bb61c85dc203616bd7936610bdc2d5cd02f24ad44aa6a2a4465ddccf4b4f650"
+      "sha256": "e2a758df5ec5f05b75cfefbbe553fcf3a206c86bd38982421bf777ce2e9dee6b"
     },
     {
       "path": "docs/GETTING_STARTED.md",
-      "sha256": "c393f6c985c1cfa79fb4a8c4213cbc27106620908aeb4b2ff3bb8b30f21b236b"
+      "sha256": "0a6c025c86abf0b5eedc8001e9de6ac83cc54bc8821151ceecbfae5433f4af02"
     },
     {
       "path": "docs/MOTOR_NATIVE_LINUX.md",
@@ -498,7 +498,7 @@
     },
     {
       "path": "docs/ONLINE_VOICE.md",
-      "sha256": "4fbadff8344467d0a0d4488d6b59f402d5397b8d4cd5d8823ddb3869634f81ad"
+      "sha256": "61ca0cc7fb7f2d568892f66d11878ae20bccbd4c1351617a9764bb562ce335f3"
     },
     {
       "path": "docs/TESTS.md",

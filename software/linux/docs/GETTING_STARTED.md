@@ -1,6 +1,6 @@
-# 开始使用
+# 手动启动 PatchX
 
-先在 Linux 电脑上运行演示，再在板端配置音频和在线服务。所有 Python 命令都从 `software/linux` 执行。
+先在 Linux 电脑上运行演示，再在板端配置音频和在线服务。所有 Python 命令都从 `software/linux` 执行。命令进入 [PatchX 的 Python 入口](../apps/patchx/__main__.py)。需要开机启动时见 [随 RAM Linux 自启动](../../../Documentation/patchx/RAM_APP.md)。
 
 ## 获取源码和依赖
 

@@ -2,7 +2,7 @@
 
 面向 RK3568 的产品入口，复用 Companion 的语音状态机、WebSocket 和浏览器服务，在同一非实时事件线程处理兼容 Android 1.0.1 的业务消息。
 
-首次使用请从 [安装与配置教程](../../docs/GETTING_STARTED.md) 开始。旧版 3568A 已在原生 Linux 上通过 `8360` 完成一次实麦流式 ASR → LLM → TTS。现场自然说完停顿后听清正确回复，测试未保存录音。 配置与实测范围见 [在线语音说明](../../docs/ONLINE_VOICE.md)。
+首次使用请从 [安装与配置教程](../../docs/GETTING_STARTED.md) 开始。3568A 测试板已在原生 Linux 上通过 `8360` 完成一次实麦流式 ASR → LLM → TTS。现场自然说完停顿后听清正确回复，测试未保存录音。 配置与实测范围见 [在线语音说明](../../docs/ONLINE_VOICE.md)。
 
 从 `software/linux` 运行：
 

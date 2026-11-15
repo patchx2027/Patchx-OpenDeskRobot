@@ -1,16 +1,16 @@
-# 旧版 3568A 的 PatchX App 随 RAM Linux 启动
+# PatchX App 随 RAM Linux 自动启动
 
-这套流程通过原厂 Android 暂存文件，使用原厂 U-Boot 启动 Linux，随后由 initramfs 自动运行同一份 PatchX 用户程序入口 `python3 -m apps.patchx`。测试结束通过串口停止应用并重启回 Android。
+这套流程适用于[已实测固件组合的 3568A](RAM_BOOT.md)，通过原厂 Android 暂存文件，使用原厂 U-Boot 启动 Linux，随后由 initramfs 自动运行同一份 PatchX 用户程序入口 `python3 -m apps.patchx`。测试结束通过串口停止应用并重启回 Android。启动代码见 [init](../../software/linux/deploy/patchx/ram/init) 和 [PatchX 启动脚本](../../software/linux/deploy/patchx/ram/patchx-ram-start)。已有 Linux 用户空间时，可按[手动启动说明](../../software/linux/docs/GETTING_STARTED.md)直接运行应用。
 
 ## 1. 准备构建输入
 
-先按[旧板 RAM 启动](RAM_BOOT.md)备份原厂 `boot`、`dtbo`，构建产品 Image、DTB 和 RK817 模块。沿用其中的 `BACKUPS`、`OUT`、`BUILD_ROOT` 和静态 ARM64 `BUSYBOX`。BusyBox 还需提供 `chroot`、`ip`（含 link 操作）、`gzip`、`tar`、`sha256sum`、`grep`、`cp`、`mkdir`、`rm` 与 `umount`，以及 `mount --bind` 和 `--install -s`。
+先按[Linux RAM 启动](RAM_BOOT.md)备份原厂 `boot`、`dtbo`，构建产品 Image、DTB 和 RK817 模块。沿用其中的 `BACKUPS`、`OUT`、`BUILD_ROOT` 和静态 ARM64 `BUSYBOX`。BusyBox 还需提供 `chroot`、`ip`（含 link 操作）、`gzip`、`tar`、`sha256sum`、`grep`、`cp`、`mkdir`、`rm` 与 `umount`，以及 `mount --bind` 和 `--install -s`。
 
 另备一个自己的 ARM64 Linux 运行环境，归档为 `runtime.tar.gz`，顶层目录必须为 `runtime/`：
 
 - 提供 `runtime/bin/sh`、`runtime/usr/bin/python3`、对应动态加载器、系统库和 Python 标准库。将[应用依赖](../../software/linux/apps/patchx/requirements.txt)安装到该解释器可见的目录。使用板端音频还需要 ALSA 工具、libasound、ALSA 配置和 libopus。
 - 使用同一 ARM64 根文件系统内配套工具和库，保留符号链接，链接目标使用归档树内的相对路径。运行环境只需 App 依赖，归档内提供 `runtime/opt/` 目录，并给自启动脚本留出 `runtime/opt/patchx-ram-app/` 路径。
-- 本流程从受信任的本地运行目录打包。归档压缩前常规文件总量最多 80 MiB，运行时会在 RAM 中同时展开 tar 流与文件树，旧板优先使用精简运行环境。板端 `/cache` 需要能容纳 40 MiB 启动包和独立的运行归档，另留文件系统余量。也可复用板上已存在且完整校验的同一归档。
+- 本流程从受信任的本地运行目录打包。归档压缩前常规文件总量最多 80 MiB，运行时会在 RAM 中同时展开 tar 流与文件树，建议使用精简运行环境。板端 `/cache` 需要能容纳 40 MiB 启动包和独立的运行归档，另留文件系统余量。也可复用板上已存在且完整校验的同一归档。
 
 例如，将 `RUNTIME_PARENT` 设为已准备好的 `runtime/` 的父目录，再归档。
 
@@ -53,7 +53,7 @@ adb push "$BUILD_ROOT/patchx-app-ram.img" /cache/patchx-ram-app/boot.img
 adb shell 'sync; sha256sum /cache/patchx-ram-app/runtime.tar.gz /cache/patchx-ram-app/boot.img'
 ```
 
-核对两个 SHA-256。按[旧板 RAM 启动第 4 节](RAM_BOOT.md#4-从-android-暂存再由-u-boot-启动)进入 U-Boot。把示例里的暂存文件路径改成 `/patchx-ram-app/boot.img`。保持实测地址和启动参数，读取 40 MiB 并核对本轮 CRC32 后才执行 `bootm 20000000`。
+核对两个 SHA-256。按[Linux RAM 启动第 4 节](RAM_BOOT.md#4-从-android-暂存再由-u-boot-启动)进入 U-Boot。把示例里的暂存文件路径改成 `/patchx-ram-app/boot.img`。保持实测地址和启动参数，读取 40 MiB 并核对本轮 CRC32 后才执行 `bootm 20000000`。
 
 ## 4. 检查自启动并返回 Android
 
@@ -73,6 +73,6 @@ patchx-ram-return
 
 脚本给 PatchX 发 TERM，等待 Python 进程退出，卸载应用用户空间的挂载，确认板载块设备文件系统均已卸载，再重启。进入原厂 Android 后可清理本轮暂存文件。
 
-## 旧板实测范围
+## 3568A 测试板实测范围
 
-旧板从原厂 Android 暂存后启动 40 MiB RAM 包，CRC32 为 `1ae3e12c`。PatchX 未经手动执行即监听在 `127.0.0.1:8090`，首页与状态接口可用，并通过 HTTP 完成一次演示对话。结束时用 `patchx-ram-return` 返回原厂 Android。`boot`、`dtbo` 和 `uboot` 分区的 SHA-256 前后一致。这次验收使用演示配置，云端语音及各外设的使用条件见[用户程序说明](../../software/linux/README.md)。
+3568A 测试板从原厂 Android 暂存后启动 40 MiB RAM 包，CRC32 为 `1ae3e12c`。PatchX 未经手动执行即监听在 `127.0.0.1:8090`，首页与状态接口可用，并通过 HTTP 完成一次演示对话。结束时用 `patchx-ram-return` 返回原厂 Android。`boot`、`dtbo` 和 `uboot` 分区的 SHA-256 前后一致。这次验收使用演示配置，云端语音及各外设的使用条件见[用户程序说明](../../software/linux/README.md)。
