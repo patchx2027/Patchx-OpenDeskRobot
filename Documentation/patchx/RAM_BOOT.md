@@ -1,23 +1,29 @@
 # 从原厂 Android 临时启动 Linux
 
-这条路径适用于实测的旧版 3568A。保留原厂 Android 和原厂 U-Boot，借用 Android 暂存启动包，由 U-Boot 从 RAM 启动 PatchX Linux，重启后回到 Android。
+因为拿到机器人是原厂的Android系统，另开发了Linux版本的，由于没有正式上线，因此采用的是保留原厂 Android 和原厂 U-Boot，借用 Android 暂存启动包，由 U-Boot 从 RAM 启动 PatchX Linux，重启后回到 Android。
 
 ## 1. 准备原厂环境并备份
 
-手头只有厂商 Android 镜像时，先按供应商针对这块板的烧录说明安装并启动 Android。板上已经运行匹配的原厂 Android 时，直接从备份开始。原厂整包的封装依供应商而定，下面从运行的 Android 读取实际分区。
+开机时板上已经运行匹配的原厂 Android，直接从备份开始。原厂整包的封装依供应商而定，下面从运行的 Android 读取实际分区。
+
+临时切换系统需要用调试串口进入 U-Boot。
+
+![旧版 3568A 主板与 USB 转串口适配器的接线实物](3568a-debug-uart-wiring.jpg)
 
 准备 Linux 或 WSL 主机、ADB 和板卡调试串口。实测串口为 1500000、8N1、无流控。先确认能看到 Android 与 U-Boot 的串口输出，且设备拥有读取原厂分区的授权。下列命令以原厂 Android 的 ADB shell 支持 `su 0` 为例。在多设备环境设置 `ANDROID_SERIAL` 后再执行。主机命令示例使用 Bash。
 
 ```sh
-adb devices -l
-adb shell 'getprop ro.product.model; uname -r; su 0 id'
-BACKUPS="$HOME/patchx-3568a-stock"
-mkdir "$BACKUPS" || exit 1
-adb exec-out su 0 cat /dev/block/by-name/boot > "$BACKUPS/boot.img"
-adb exec-out su 0 cat /dev/block/by-name/dtbo > "$BACKUPS/dtbo.img"
+adb devices -l  # 列出连接的设备的详细信息
+adb shell 'getprop ro.product.model; uname -r; su 0 id' # 设备型号
+BACKUPS="$HOME/patchx-3568a-stock"  # 在本地pc备份目录
+mkdir "$BACKUPS" || exit 1          # 创建备份目录
+adb exec-out su 0 cat /dev/block/by-name/boot > "$BACKUPS/boot.img" # 以root权限读取设备的`boot`分区，并备份
+adb exec-out su 0 cat /dev/block/by-name/dtbo > "$BACKUPS/dtbo.img" # 以root权限读取设备的`dtbo`分区，并备份
 adb shell 'su 0 sha256sum /dev/block/by-name/boot /dev/block/by-name/dtbo'
 sha256sum "$BACKUPS/boot.img" "$BACKUPS/dtbo.img"
 ```
+
+板端已配置 SSH 且账号有权限读取分区时，也可以用 SSH 执行等效的只读备份命令。
 
 对比板端和主机的散列。实测兼容的原厂 `boot` 是 40 MiB，`dtbo` 是 4 MiB。打包器还会核对已实测的 SHA-256。散列与实测固件组合不符时，需要单独适配该板的启动链。
 

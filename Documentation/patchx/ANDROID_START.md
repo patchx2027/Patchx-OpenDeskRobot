@@ -12,7 +12,16 @@
 
 ## 2. 没有网络时，先通过串口确认板卡状态
 
-连接板卡调试串口。实测参数是 1500000、8N1、无流控。电脑与板卡的串口收发线交叉连接，并共地。串口独立于 Wi‑Fi，可以先用它确认 Android 已启动：
+连接板卡调试串口。实测参数是 1500000、8N1、无流控。电脑与板卡的串口收发线交叉连接，并共地。
+
+串口独立于 Wi‑Fi，之前的Android内核会反复打印`rk817-bat`电池状态和充电调试日志，比较讨厌，因此需要临时降低串口的内核日志级别
+
+```bash
+cat /proc/sys/kernel/printk
+su 0 sh -c 'echo 4 > /proc/sys/kernel/printk'
+```
+
+可以先用它确认 Android 已启动：
 
 ```sh
 getprop ro.product.model
@@ -20,6 +29,8 @@ uname -r
 getprop sys.boot_completed
 ip -4 -o addr show dev wlan0
 ```
+
+没有 IPv4 地址时，在旧板 Android 的 Wi‑Fi 设置里选择电脑所在的 SSID，按现场要求输入密码或完成认证。
 
 ### 首次从串口连接 Wi‑Fi
 
@@ -54,12 +65,26 @@ getprop service.adb.tcp.port
 
 ## 3. 确认 ADB 可用，再备份和启动 Linux
 
-原厂开发系统已开启网络 ADB 时，在电脑上执行以下命令。先将 `BOARD_ADB` 设为串口读到的地址和端口，格式为 `IPv4:端口`。
+先从板子串口查看 `wlan0` 的 IPv4 地址和 ADB 端口：
 
 ```sh
+ip -4 -o addr show dev wlan0
+getprop service.adb.tcp.port
+```
+
+截图里 `wlan0` 的 IPv4 地址是 `10.0.50.93`，实际操作时以自己的板子输出为准。
+
+![Android 串口中 wlan0 的 IPv4 地址](android-wlan0-ip-address.png)
+
+原厂开发系统已开启网络 ADB 时，在电脑上把 `BOARD_ADB` 设为板卡的 `IPv4:端口`。以下用截图中的地址和端口作示例：
+
+```sh
+BOARD_ADB=10.0.50.93:5555
 adb connect "$BOARD_ADB"
 adb devices -l
 adb -s "$BOARD_ADB" shell getprop ro.product.model
 ```
+
+![电脑通过网络 ADB 连接板卡并打开 shell](network-adb-connect.png)
 
 如果还未开启网络 ADB，使用原厂系统支持的开发者设置，或通过 USB ADB 完成授权并继续。若电脑读不到板卡信息，先检查地址、端口和局域网互通情况。板端授权及连通性确认后，按[从原厂 Android 临时启动 Linux](RAM_BOOT.md)备份 `boot` 和 `dtbo`、构建和暂存 RAM 包、从 U-Boot 启动，并在测试结束后回到 Android。
