@@ -65,6 +65,6 @@ band=a
 
 早期产品 DTB 与上述最终相机 pre-overlay DTB 做过全量静态语义对照，覆盖 983 个节点、4990 个属性、773 个 phandle 及 FDT 元数据。该记录对应加入音频布线属性前的源码。来源及散列见 [SOURCE.json](SOURCE.json)。
 
-## 2026 年 11 月 15 日构建验证
+## 2026 年 11 月 15 日构建与旧板验证
 
-移除 Linux 根目录的 Android 构建文件后，完成产品配置的 Image、全部模块和产品 DTB 构建。产物中的 codec 节点包含 `rockchip,hp-no-mic-uses-spk-ctl`。这批产物待旧板接回后做 RAM 启动、功放和返回 Android 验证。实际录放音及流式问答的既有板端结果见 [在线语音说明](../../software/linux/docs/ONLINE_VOICE.md)。
+移除 Linux 根目录的 Android 构建文件后，完成产品配置的 Image、全部模块和产品 DTB 构建。产物中的 codec 节点包含 `rockchip,hp-no-mic-uses-spk-ctl`。这批产物已在旧版 3568A 上通过 RAM 启动验证。PatchX 默认走 `HP_NO_MIC`，现场听清「乙组，火车飞机」。GPIO148 在播放时拉低使能功放，结束后恢复高电平，播放路由回到 `OFF`。测试结束后旧板正常重启回原厂 Android。实际录放音及流式问答的既有板端结果见 [在线语音说明](../../software/linux/docs/ONLINE_VOICE.md)。
