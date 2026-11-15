@@ -18,7 +18,7 @@ GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1]
 | --- | --- |
 | 运行演示，修改语音、表情或电机逻辑 | [PatchX 用户程序](software/linux/README.md) |
 | 修改驱动或设备树，构建 Image、模块和 DTB | [内核与设备树指南](Documentation/patchx/SOURCE_GUIDE.md) · [内核构建](Documentation/patchx/BUILD.md) |
-| 组装旧版 3568A 的临时 RAM 启动包 | [旧板 RAM 启动包](Documentation/patchx/RAM_BOOT.md) |
+| 手头只有原厂 Android，想在旧版 3568A 启动 Linux | [从 Android 临时启动 Linux](Documentation/patchx/RAM_BOOT.md) |
 
 仓库根目录的 `README` 是内核说明，本页是 PatchX 产品入口。
 
@@ -36,17 +36,14 @@ python3 -m apps.patchx --config apps/patchx/demo.json
 
 ## 目录
 
-```text
-arch/arm64/boot/dts/rockchip/  RK3568 及 PatchX 板级设备树
-arch/arm64/configs/           内核构建配置
-drivers/、sound/、include/     完整内核源码
-Documentation/patchx/         内核阅读、构建和实测说明
-software/linux/apps/patchx/   PatchX 业务与硬件端口
-software/linux/apps/companion/ 语音、网络传输和网页服务
-software/linux/deploy/patchx/  ALSA 配置和在线配置示例
-software/linux/tools/         第一方原生辅助源码与构建入口
-software/linux/tests/         应用测试源码
-```
+| 层级 | 路径 | 职责 |
+| --- | --- | --- |
+| 内核 | `arch/arm64/boot/dts/rockchip/`、`arch/arm64/configs/` | RK3568 设备树和 PatchX 产品内核配置 |
+| 内核 | `drivers/`、`sound/`、`include/` 等 | 完整内核源码，沿用 Linux 内核目录结构 |
+| 板级启动 | [tools/patchx/](tools/patchx/) | 旧板 RAM 包打包器和历史 RK817 模块构建入口 |
+| 板级文档 | [Documentation/patchx/](Documentation/patchx/) | 从 Android 启动 Linux、内核构建、设备树和硬件实测 |
+| 用户程序 | [software/linux/](software/linux/README.md) | `apps/patchx` 的业务与硬件适配、`apps/companion` 的语音和网页服务 |
+| 应用交付 | `software/linux/{deploy,docs,tools,tests}/` | 配置、应用文档、原生辅助程序和回归测试 |
 
 ## 功能与实测范围
 

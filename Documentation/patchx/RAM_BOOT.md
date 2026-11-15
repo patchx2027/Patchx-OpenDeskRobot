@@ -1,18 +1,69 @@
-# 旧版 3568A RAM 启动包
+# 从原厂 Android 临时启动 Linux
 
-[打包入口](../../tools/patchx/build-rk3568-ram-boot.py) 生成给旧版 3568A 原厂 U-Boot 使用的 40 MiB 临时启动包。先按[内核构建说明](BUILD.md)生成同次构建的 Image、产品 DTB 和 RK817 模块。
+这条路径适用于实测的旧版 3568A。保留原厂 Android 和原厂 U-Boot，借用 Android 暂存启动包，由 U-Boot 从 RAM 启动 PatchX Linux，重启后回到 Android。
 
-## 输入
+## 1. 准备原厂环境并备份
 
-在 Linux 或 WSL 安装 Python 3.9 或更新版本和 `device-tree-compiler`，确保 `fdtoverlay`、`fdtget` 在 PATH 中。
+手头只有厂商 Android 镜像时，先按供应商针对这块板的烧录说明安装并启动 Android。板上已经运行匹配的原厂 Android 时，直接从备份开始。原厂整包的封装依供应商而定，下面从运行的 Android 读取实际分区。
 
-- **板卡备份**。使用从自己旧版 3568A 只读备份的完整原厂 `boot`、`dtbo` 分区。工具核对已实测的固件 SHA-256，包括 Boot v2 头、Rockchip 资源和板卡 overlay。其它固件版本需要单独适配。
-- **内核产物**。使用本分支产品配置生成的未压缩 ARM64 `Image`、`rk3568-patchx-product.dtb` 和 `include/config/kernel.release`。DTB 使用应用原厂 overlay 之前的版本。
-- **早期用户空间**。提供 gzip 压缩的 `newc` initramfs，内有可执行的根目录 `/init` 和同次构建的 `snd-soc-rk817.ko`。工具核对 ARM64 模块和 vermagic 的 release。启动脚本负责挂载 `/dev`、`/proc`、`/sys`，并根据用途提供串口 shell、加载模块或启动根文件系统。可在准备好的 initramfs 目录里用 `find . -print0 | cpio --null -o -H newc --owner 0:0 | gzip -n` 归档。为脚本式 `/init` 提供 ARM64 解释器，例如静态 BusyBox 和指向它的 `/bin/sh`。PatchX 应用、根文件系统和外设固件由使用者提供。
+准备 Linux 或 WSL 主机、ADB 和板卡调试串口。实测串口为 1500000、8N1、无流控。先确认能看到 Android 与 U-Boot 的串口输出，且设备拥有读取原厂分区的授权。下列命令以原厂 Android 的 ADB shell 支持 `su 0` 为例。在多设备环境设置 `ANDROID_SERIAL` 后再执行。主机命令示例使用 Bash。
 
-## 组装
+```sh
+adb devices -l
+adb shell 'getprop ro.product.model; uname -r; su 0 id'
+BACKUPS="$HOME/patchx-3568a-stock"
+mkdir "$BACKUPS" || exit 1
+adb exec-out su 0 cat /dev/block/by-name/boot > "$BACKUPS/boot.img"
+adb exec-out su 0 cat /dev/block/by-name/dtbo > "$BACKUPS/dtbo.img"
+adb shell 'su 0 sha256sum /dev/block/by-name/boot /dev/block/by-name/dtbo'
+sha256sum "$BACKUPS/boot.img" "$BACKUPS/dtbo.img"
+```
 
-从仓库根目录运行。这里沿用[内核构建说明](BUILD.md)的 `OUT`，其余路径指向实际输入和一个尚不存在的输出文件。
+对比板端和主机的散列。实测兼容的原厂 `boot` 是 40 MiB，`dtbo` 是 4 MiB。打包器还会核对已实测的 SHA-256。散列与实测固件组合不符时，需要单独适配该板的启动链。
+
+## 2. 构建内核与准备早期用户空间
+
+```sh
+git clone --branch linux --single-branch https://github.com/patchx2027/Patchx-OpenDeskRobot.git
+cd Patchx-OpenDeskRobot
+```
+
+按[内核构建](BUILD.md)执行旧板产品配置对应的 Image、modules 和 DTB 构建，保留同一个 shell 中的 `OUT` 和 `BUILD_ROOT`。打包另需 Python 3.9 或更新版本、`device-tree-compiler`（提供 `fdtoverlay` 和 `fdtget`）、GNU cpio 和 gzip。
+
+已有兼容 initramfs 时可以直接使用。第一次验证建议先做可进串口的最小 initramfs。将 `BUSYBOX` 设为你准备好的静态 ARM64 BusyBox 的绝对路径。它须提供 `sh`、`mount`、`uname`、`setsid`、`cttyhack`、`sleep`、`insmod`、`cat`、`sync`、`reboot` 以及 `--install -s`。用 `file "$BUSYBOX"` 确认架构和静态链接。
+
+```sh
+INIT_ROOT="$BUILD_ROOT/initramfs"
+INITRAMFS="$BUILD_ROOT/initramfs.cpio.gz"
+mkdir "$INIT_ROOT" || exit 1
+mkdir "$INIT_ROOT"/{bin,dev,proc,sys,tmp}
+install -m 755 "$BUSYBOX" "$INIT_ROOT/bin/busybox"
+ln -s busybox "$INIT_ROOT/bin/sh"
+aarch64-linux-gnu-strip --strip-debug \
+  -o "$INIT_ROOT/snd-soc-rk817.ko" "$OUT/sound/soc/codecs/snd-soc-rk817.ko"
+cat > "$INIT_ROOT/init" <<'INIT'
+#!/bin/sh
+set -eu
+/bin/busybox --install -s /bin
+export PATH=/bin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs tmpfs /tmp
+echo PATCHX_RAM_READY
+uname -r
+while :; do
+    setsid cttyhack sh -i </dev/console >/dev/console 2>&1 || sleep 1
+done
+INIT
+chmod 755 "$INIT_ROOT/init"
+(set -o pipefail; cd "$INIT_ROOT" &&
+  find . -print0 | cpio --null -o -H newc --owner 0:0 | gzip -n -9 > "$INITRAMFS")
+```
+
+最小环境提供串口和驱动核对。运行 PatchX 应用时还需准备 Linux 根文件系统、应用依赖和外设固件，按实际部署方式由 `/init` 启动。应用配置见[用户程序说明](../../software/linux/README.md)。
+
+## 3. 组装 40 MiB RAM 包
 
 ```sh
 tools/patchx/build-rk3568-ram-boot.py \
@@ -25,14 +76,41 @@ tools/patchx/build-rk3568-ram-boot.py \
   --output "$BUILD_ROOT/patchx-ram.img"
 ```
 
-工具保留原厂资源中的 logo，用产品 DTB 替换资源内 DTB，并用备份的 overlay 做离线兼容检查。输出中的 DTB 由板上 loader 应用 overlay。成功时输出大小、CRC32 和 SHA-256。
+工具核对 Image 与 RK817 模块的 release、产品 DTB 和原厂 overlay 兼容性。包内保留原厂 logo 和产品 pre-overlay DTB，overlay 由 U-Boot 施加。记录打包命令打印的 CRC32 和 SHA-256。
 
-## 临时启动
+## 4. 从 Android 暂存，再由 U-Boot 启动
 
-把启动包作为普通文件暂存在旧板可由 U-Boot 读取的文件系统，校验 SHA-256。进入 U-Boot 后先核对板型、`bdinfo` 和分区表，确认 RAM 和暂存位置。以下地址对应旧板实测布局，分区和文件路径按本次暂存位置填写。
+在 Android 上选择 U-Boot 可读的文件系统。实测示例用 `/cache`，在该板的 U-Boot 分区号是 `mmc 0:c`。先核对板端实际分区和可写空间，给 40 MiB 文件留出额外空间。下列示例需要有权向 `/cache` 写入普通文件的 root ADB。
 
-1. 用 `ext4load` 把包读到 `0x20000000`。核对 `filesize=0x2800000`，并执行 `crc32 20000000 2800000` 比对打包输出。
-2. 在本次 U-Boot 会话设定 `kernel_addr_r=400000`、`fdt_addr_r=a100000`、`ramdisk_addr_r=4000000`，并将 `initrd_high`、`fdt_high` 设为 `ffffffffffffffff`。本次 Linux 启动参数为 `console=ttyFIQ0 earlycon=uart8250,mmio32,0xfe660000 rdinit=/init ro loglevel=7 panic=0`。
-3. 执行 `bootm 20000000`。这套流程只读入 RAM，环境设置仅用于当前会话。进入 Linux 后核对内核版本和功能，结束时卸载临时挂载并重启回原厂 Android。
+```sh
+adb shell 'df -h /cache'
+adb shell 'mkdir /cache/patchx-ram'
+adb push "$BUILD_ROOT/patchx-ram.img" /cache/patchx-ram/boot.img
+adb shell 'sha256sum /cache/patchx-ram/boot.img; sync'
+```
 
-使用 2026 年 11 月 15 日实测的同组输入，打包入口生成了与旧板实测镜像逐字节一致的文件，CRC32 为 `9f9ec0e9`。该次实测范围见[内核验证说明](VALIDATION.md#2026-年-11-月-15-日构建与旧板验证)。
+SHA-256 一致后重启 Android，在调试串口出现 U-Boot 时按 Ctrl+C 停在 `=>`。先执行 `bdinfo` 和 `part list mmc 0`，确认板型、内存范围和 `cache` 分区。然后把普通文件读入 RAM：
+
+```text
+ext4load mmc 0:c 20000000 /patchx-ram/boot.img
+printenv filesize
+crc32 20000000 2800000
+```
+
+只有读满 41943040 字节、`filesize=0x2800000` 且 CRC32 与本轮打包输出一致时才继续。以下设置只存在于本次 U-Boot 会话。
+
+```text
+setenv kernel_addr_r 400000
+setenv fdt_addr_r a100000
+setenv ramdisk_addr_r 4000000
+setenv initrd_high ffffffffffffffff
+setenv fdt_high ffffffffffffffff
+setenv bootargs console=ttyFIQ0 earlycon=uart8250,mmio32,0xfe660000 rdinit=/init ro loglevel=7 panic=0
+bootm 20000000
+```
+
+## 5. 确认 Linux 已启动并返回 Android
+
+串口出现 `PATCHX_RAM_READY` 后，用 `uname -r` 与构建时的 `kernel.release` 核对。需要检查音频驱动时执行 `insmod /snd-soc-rk817.ko`，再用 `cat /proc/asound/cards` 查看声卡。测试结束，关闭运行的应用并卸载临时挂载。上述最小环境可以执行 `sync` 和 `reboot -f` 返回原厂 Android，看到 Android 启动后再清理本轮暂存的普通文件。
+
+使用 2026 年 11 月 15 日实测的同组输入，打包入口生成了与旧板实测包逐字节一致的文件，CRC32 为 `9f9ec0e9`。每次应比对本轮输出的 CRC32。板端结果见[内核验证说明](VALIDATION.md#2026-年-11-月-15-日构建与旧板验证)。
