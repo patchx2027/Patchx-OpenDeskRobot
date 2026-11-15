@@ -65,11 +65,21 @@ python3 -m apps.patchx --config apps/patchx/demo.json
 
 PatchX 应用入口在 `software/linux/apps/patchx/`，通用语音、传输和网页服务在 `software/linux/apps/companion/`。部署配置、应用文档、原生工具和回归测试分别在 `software/linux/` 下的 `deploy/`、`docs/`、`tools/` 和 `tests/`。
 
-## 功能与实测范围
+## 外设与接入
 
-内核功能见[实测说明](Documentation/patchx/VALIDATION.md)，跨系统录放音和 H8 接线对照见[音频实测](Documentation/patchx/RK3568-AUDIO-VERIFICATION.md)。用户程序包含业务消息、二维表情、软件音量、背光、MQTT 和相机请求处理，具体接线及启用方法见[用户程序说明](software/linux/README.md)。
+以下是本分支的 RK3568 产品配置及原生 Linux 支持范围。最小 RAM 启动环境提供串口和驱动检查，语音、表情和相机等应用功能还需部署 PatchX 用户程序。
 
-相机成像需要匹配的 RKAIQ 和模组 IQ 参数。当前辅助程序保留实测版本校验；自行重建后需要按[相机说明](software/linux/docs/CAMERA.md)重新适配。语音使用 USB 逻辑通道 0，没有复现原 Android 的 CAE、阵列 AEC 或离线唤醒。GD32F503 串口控制和 OTA 工具已提供，串口默认留空。接线、操作和实测范围见[电机板接入](software/linux/apps/patchx/README.md#gd32f503-电机控制)。
+| 外设 | 在 Linux 上能做什么 | 接入说明 |
+| --- | --- | --- |
+| Bothlent USB 麦阵、H8 接线 | ALSA 可采集 16 kHz、8 通道 PCM。前 4 路实测有拾音响应，PatchX 基础语音选用逻辑通道 0 | [音频配置](software/linux/deploy/patchx/AUDIO.md) · [H8 接线与采集对照](Documentation/patchx/RK3568-AUDIO-VERIFICATION.md) |
+| RK809 与扬声器 | 旧板通过 `HP_NO_MIC` 播放。GPIO148 控制外部功放，播放结束后路由回到 `OFF` | [音频配置](software/linux/deploy/patchx/AUDIO.md) |
+| 720×720 DSI 屏幕与背光 | VOP2/DSI0 输出画面。PatchX 可绘制二维表情，并通过配置的背光设备调节亮度 | [显示与背光配置](software/linux/apps/patchx/README.md) |
+| OV5695 摄像头 | 经 CSI-2 和 RKISP 采集，配套用户态工具可生成 JPEG。需要匹配的 RKAIQ 库和模组 IQ 参数 | [相机接入](software/linux/docs/CAMERA.md) |
+| GD32F503 电机板 | UART 可查询六轴状态、PD 参数和故障。应用提供动作和 OTA 入口，有动力动作和原生 Linux OTA 的整链路仍待验收 | [电机接入](software/linux/apps/patchx/README.md#gd32f503-电机控制) · [串口联调范围](software/linux/docs/MOTOR_NATIVE_LINUX.md) |
+| Wi-Fi | BCMDHD 使用匹配的 firmware/NVRAM。原生 Linux 已完成 5 GHz 入网、DHCP 和局域网双向传输 | [设备树与固件说明](Documentation/patchx/SOURCE_GUIDE.md) |
+| 调试串口 | `ttyFIQ0` 用于读取启动日志、进入 U-Boot 和 Linux shell | [串口与联网](Documentation/patchx/ANDROID_START.md) · [RAM 启动](Documentation/patchx/RAM_BOOT.md) |
+
+在线语音的流式对话范围和配置见[在线语音说明](software/linux/docs/ONLINE_VOICE.md)。Linux 基础语音路径暂未实现原厂 Android 的 CAE、阵列 AEC 和离线唤醒。
 
 ## 来源与许可
 

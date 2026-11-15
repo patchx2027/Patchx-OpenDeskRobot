@@ -458,7 +458,7 @@
     },
     {
       "path": "deploy/patchx/AUDIO.md",
-      "sha256": "43e787722ee1a797a79a4d4e54e150b7050c4db6c48a88e7644435468d5b9c7c"
+      "sha256": "a605f37a54060247d79ee4a04799f2297127144f531ef7250dbba99cdb99c337"
     },
     {
       "path": "deploy/patchx/alsa-rk3568.conf",
@@ -482,7 +482,7 @@
     },
     {
       "path": "docs/ONLINE_VOICE.md",
-      "sha256": "58afb173f26138142c2968be528d7a2d8179f9ebac5e919ff6abd0caf28abc1c"
+      "sha256": "4fbadff8344467d0a0d4488d6b59f402d5397b8d4cd5d8823ddb3869634f81ad"
     },
     {
       "path": "docs/TESTS.md",

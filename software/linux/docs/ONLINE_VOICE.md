@@ -40,4 +40,4 @@ ws://118.31.102.180:8360/?device_id=<应用SN>&user_id=<应用SN>
 
 接入时依次观察握手与音频参数、讲话上传、识别文字、回答内容、下行音频及实际播放。服务端问题需要结合对应会话排查，公开反馈不要包含令牌、设备身份或录音。
 
-Linux 基础路径没有复现原 Android 的 CAE、阵列 AEC 或离线唤醒。设备绑定、摄像头问答、全部模型和工具以及长时间稳定性也不在这次有限验证范围内。板端配置见 [音频说明](../deploy/patchx/AUDIO.md)，内核驱动范围见 [内核验证说明](../../../Documentation/patchx/VALIDATION.md)。
+Linux 基础路径没有复现原 Android 的 CAE、阵列 AEC 或离线唤醒。设备绑定、摄像头问答、全部模型和工具以及长时间稳定性也不在这次有限验证范围内。板端配置见 [音频说明](../deploy/patchx/AUDIO.md)，采集和播放结果见 [音频实测记录](../../../Documentation/patchx/RK3568-AUDIO-VERIFICATION.md)。

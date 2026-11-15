@@ -93,7 +93,7 @@
       "metadata_equal": true
     }
   },
-  "scope": "Kernel driver source derives from the audio-v5 inputs. The product device tree now declares the HP_NO_MIC amplifier wiring. Archived semantic comparisons refer to the pre-property DTB sources; source hashes describe the current tree. Individual board observations and build scope are documented in VALIDATION.md.",
+  "scope": "Kernel driver source derives from the audio-v5 inputs. The product device tree now declares the HP_NO_MIC amplifier wiring. Archived semantic comparisons refer to the pre-property DTB sources; source hashes describe the current tree. Product peripheral support is summarized in the root README.md; build scope is documented in BUILD.md.",
   "product_config": {
     "path": "arch/arm64/configs/patchx_rk3568_product.config",
     "sha256": "d4170c250b3c45dc1879fcd0cd25335213f71dc8e4cb312c1383d764345d0952",

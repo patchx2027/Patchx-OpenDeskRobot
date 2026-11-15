@@ -10,7 +10,7 @@
 
 [patchx_rk3568_product.config](../../arch/arm64/configs/patchx_rk3568_product.config) 是树内 codec 构建使用的完整 `.config`，其中 `CONFIG_SND_SOC_RK817=m`。它不是精简 defconfig，按下列步骤复制到输出目录。
 
-本流程从本分支生成一组配套的内核产物。历次实机测试所用的环境和范围见 [实测说明](VALIDATION.md)。
+本流程从本分支生成一组配套的内核产物。各外设的支持范围见 [产品首页](../../README.md#外设与接入)。
 
 ## 1. 配置和构建内核
 
