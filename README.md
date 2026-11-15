@@ -2,6 +2,8 @@
 
 本分支提供 PatchX 桌面机器人的 Android 应用源码、构建配置和 RK3568 设备树参考。应用入口在 [`software/android/`](software/android/README.md)。原生 Linux 发行版见 [`linux` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/linux)。
 
+GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/main/protocol/v1)。
+
 ## 从哪里开始
 
 第一次接触项目，先选自己要做的事，不必从头读完整个仓库。
