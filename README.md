@@ -18,9 +18,9 @@ GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1]
 | --- | --- |
 | 运行演示，修改语音、表情或电机逻辑 | [PatchX 用户程序](software/linux/README.md) |
 | 修改驱动或设备树，构建 Image、模块和 DTB | [内核与设备树指南](Documentation/patchx/SOURCE_GUIDE.md) · [内核构建](Documentation/patchx/BUILD.md) |
-| 手头只有原厂 Android，想在旧版 3568A 启动 Linux | [从 Android 临时启动 Linux](Documentation/patchx/RAM_BOOT.md) |
+| 手头只有原厂 Android，想联网、了解烧录并启动 Linux | [原厂 Android 准备、联网与启动](Documentation/patchx/ANDROID_START.md) · [Linux RAM 启动步骤](Documentation/patchx/RAM_BOOT.md) |
 
-仓库根目录的 `README` 是内核说明，本页是 PatchX 产品入口。
+仓库根目录的 [README](README) 随内核源码保留，面向内核开发者。当前的 [README.md](README.md) 是 PatchX 产品首页，从这里找应用、板级文档和启动流程。
 
 ```sh
 git clone --branch linux --single-branch \
@@ -34,16 +34,36 @@ python3 -m apps.patchx --config apps/patchx/demo.json
 
 演示页面为 `http://127.0.0.1:8090/`。演示模式不连接语音服务，也不打开板卡设备。
 
-## 目录
+## 顶层目录
 
-| 层级 | 路径 | 职责 |
-| --- | --- | --- |
-| 内核 | `arch/arm64/boot/dts/rockchip/`、`arch/arm64/configs/` | RK3568 设备树和 PatchX 产品内核配置 |
-| 内核 | `drivers/`、`sound/`、`include/` 等 | 完整内核源码，沿用 Linux 内核目录结构 |
-| 板级启动 | [tools/patchx/](tools/patchx/) | 旧板 RAM 包打包器和历史 RK817 模块构建入口 |
-| 板级文档 | [Documentation/patchx/](Documentation/patchx/) | 从 Android 启动 Linux、内核构建、设备树和硬件实测 |
-| 用户程序 | [software/linux/](software/linux/README.md) | `apps/patchx` 的业务与硬件适配、`apps/companion` 的语音和网页服务 |
-| 应用交付 | `software/linux/{deploy,docs,tools,tests}/` | 配置、应用文档、原生辅助程序和回归测试 |
+| 目录 | 职责 |
+| --- | --- |
+| `arch/` | CPU 架构代码。RK3568 设备树在 `arm64/boot/dts/rockchip/`，产品配置在 `arm64/configs/` |
+| `block/` | 块设备 I/O 层 |
+| `certs/` | 内核证书和密钥管理 |
+| `crypto/` | 内核密码算法与接口 |
+| `Documentation/` | 内核文档。[`Documentation/patchx/`](Documentation/patchx/) 管理板级启动、构建和实测 |
+| `drivers/` | 内核设备驱动，包括 GPIO、显示、USB 和媒体 |
+| `fs/` | 文件系统和虚拟文件系统层 |
+| `include/` | 内核及用户空间接口头文件 |
+| `init/` | 内核启动和初始化代码 |
+| `io_uring/` | io_uring 异步 I/O 接口 |
+| `ipc/` | 进程间通信 |
+| `kernel/` | 调度、时间、中断等内核核心机制 |
+| `lib/` | 内核内部通用库 |
+| `LICENSES/` | 内核许可证文本 |
+| `mm/` | 内存管理 |
+| `net/` | 网络协议栈 |
+| `samples/` | 内核接口用法示例 |
+| `scripts/` | 内核配置、生成、编译和检查脚本 |
+| `security/` | 内核安全框架和访问控制 |
+| [`software/linux/`](software/linux/README.md) | PatchX 用户程序、配置、文档、原生辅助工具和应用测试 |
+| `sound/` | ALSA、ASoC 和 RK817 音频驱动 |
+| `tools/` | 内核及主机工具。[`tools/patchx/`](tools/patchx/) 包含旧板 RAM 打包器 |
+| `usr/` | 内核构建时的 initramfs 生成和打包支持 |
+| `virt/` | 内核虚拟化支持 |
+
+PatchX 应用入口在 `software/linux/apps/patchx/`，通用语音、传输和网页服务在 `software/linux/apps/companion/`。部署配置、应用文档、原生工具和回归测试分别在 `software/linux/` 下的 `deploy/`、`docs/`、`tools/` 和 `tests/`。
 
 ## 功能与实测范围
 
