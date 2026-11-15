@@ -14,7 +14,7 @@ dtc -i . -I dts -O dtb \
     rk3568-patchx-android.dts
 ```
 
-整理前后编译结果中的 760 个节点、4,744 项保留属性已逐项比对，值没有变化。这个检查确认的是整理未改动配置，新系统仍需上板验证。来源、删除的设备信息及文件校验值见 [export-info.json](export-info.json)。
+配置来源、移除的设备信息与文件校验值见 [export-info.json](export-info.json)。
 
 ## 文件怎么分工
 

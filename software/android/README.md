@@ -16,7 +16,7 @@
 | 构建 JDK | `17` |
 | Java 源码 / 字节码级别 | `11` |
 
-运行依赖设备厂商的音频、串口、板卡服务与原生库，源码还包含对 `com.patchx_sys` 配套服务的绑定接口。最低 API 和 ABI 仅表示编译配置；普通手机、模拟器及其他 Android 板卡是否能运行，尚未验证。
+运行依赖设备厂商的音频、串口、板卡服务与原生库，源码还包含对 `com.patchx_sys` 配套服务的绑定接口。部署到提供兼容原生库和厂商服务的 PatchX 板卡，硬件相关功能依赖这些系统组件。
 
 ## 第一次读代码
 
@@ -38,7 +38,7 @@
 - `app/src/main/java/com/patchx/patchface/`、`com/VideoProcess/`：视觉原生接口与调用层。
 - `app/src/main/java/com/wcy/testserial/`：串口及固件升级调用层。
 - `app/src/main/aidl/`：配套系统服务接口。
-- `docs/`：来源、依赖缺口及验证记录。
+- `docs/`：第三方依赖、许可与补齐清单。
 
 ## 构建前准备
 
@@ -57,7 +57,7 @@ SDK、原生库和资源的预期位置如下，路径相对于本目录：
 | 32 位 ARM 原生库 | `app/src/main/jniLibs/armeabi-v7a/` |
 | 语音模型、视觉模型及配套资源 | `app/src/main/assets/` 下的对应路径 |
 
-[excluded-inputs.json](docs/excluded-inputs.json) 记录来源快照中未分发文件的相对路径、大小和 SHA-256。可用这份清单核对文件。文件的使用和再分发仍受原许可约束，补齐清单也不表示编译和运行已经通过。私钥、设备授权等材料应由使用者为自己的设备重新取得，不应复用来源工程的材料。
+[excluded-inputs.json](docs/excluded-inputs.json) 记录来源快照中未分发文件的相对路径、大小和 SHA-256。可用这份清单核对文件。文件的使用和再分发受原许可约束。私钥、设备授权等材料应由使用者为自己的设备重新取得，不应复用来源工程的材料。
 
 ## 本地配置与构建
 
@@ -92,7 +92,25 @@ python3 tools/check_prerequisites.py
 ./gradlew :app:assembleDebug
 ```
 
-Windows 可使用 `gradlew.bat :app:assembleDebug`。首次运行 Wrapper 需要联网下载对应 Gradle 发行版。当前仓库仍缺少开头列出的输入，尚未通过完整 APK 构建。已有检查结果见 [发布状态](docs/RELEASE_STATUS.md)；源码检查不能替代 APK 构建和设备测试。
+Windows 可使用 `gradlew.bat :app:assembleDebug`。首次运行 Wrapper 需要联网下载对应 Gradle 发行版。
+
+## 部署到设备
+
+完成构建后，Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。在目标板的原厂 Android 上开启 USB 调试并授权开发电脑。以下命令从 `software/android/` 执行。若同时连接了多台设备，使用 `adb -s <设备序列号>` 指定目标板。
+
+```sh
+adb devices -l
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.patchx_main/.patchx.MainActivity2
+```
+
+`-r` 适用于签名匹配的已安装版本。如果板上已有不同签名的同名原厂应用，请使用设备方提供的安装或签名流程，并在任何替换操作前备份应用数据。设备还需提供工程依赖的厂商 SDK 运行环境和配套系统服务。
+
+## 使用 PatchX
+
+1. 从 Android 应用列表打开 PatchX，或执行上面的启动命令。按系统提示授予使用功能所需的权限，例如麦克风权限。
+2. 使用在线语音时，先让板卡联网，并在构建前配置自己获授权的 WebSocket 服务地址、身份和令牌。MQTT 使用同一节列出的独立配置。
+3. 调整显示或音频硬件时，按[设备树说明](../../hardware/rk3568/device-tree/README.md)查找对应节点。设备树属于原厂系统启动配置，部署 App 只需安装 APK。
 
 ## 发布与许可
 

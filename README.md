@@ -2,7 +2,7 @@
 
 本分支提供 PatchX 桌面机器人的 Android 应用源码、构建配置和 RK3568 设备树参考。应用入口在 [`software/android/`](software/android/README.md)。原生 Linux 发行版见 [`linux` 分支](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/linux)。
 
-GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/main/protocol/v1)。
+GD32 串口帧与流式语音的共同约定见 [共享协议 v1](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/main/protocol/v1)。
 
 ## 从哪里开始
 
@@ -12,7 +12,8 @@ GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1]
 | --- | --- | --- |
 | 了解 Android 应用如何组织 | [Android 工程说明](software/android/README.md) | 应用入口和对应功能的 Java 代码 |
 | 调整屏幕亮度、时序或硬件接线 | [设备树教程](hardware/rk3568/device-tree/GUIDE.md) | 教程对应的 `board/` 文件 |
-| 准备编译 Android 应用 | [构建前准备](software/android/README.md#构建前准备) | 先核对第三方依赖，再填写本地配置 |
+| 构建 Android 应用 | [构建前准备](software/android/README.md#构建前准备) | [本地配置与构建](software/android/README.md#本地配置与构建) |
+| 安装和运行 PatchX | [部署到设备](software/android/README.md#部署到设备) | [使用 PatchX](software/android/README.md#使用-patchx) |
 
 本分支的设备树参考对应原厂 Android 4.19。
 
@@ -22,7 +23,6 @@ GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1]
 - [RK3568 设备树](hardware/rk3568/device-tree/README.md)
 - [设备树阅读与修改教程](hardware/rk3568/device-tree/GUIDE.md)
 - [第三方依赖与待补输入](software/android/docs/THIRD_PARTY.md)
-- [发布范围、来源与验证状态](software/android/docs/RELEASE_STATUS.md)
 
 ## 目录
 
