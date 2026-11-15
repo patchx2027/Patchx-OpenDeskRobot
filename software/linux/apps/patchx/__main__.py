@@ -70,7 +70,7 @@ def create_runtime(config, audio_factory=None, codec_factory=None, transport_fac
         if volume_port is None:
             volume_port = SoftwareVolume(settings["volume_initial"])
         if audio_route is None:
-            audio_route = RK809SpeakerRoute()
+            audio_route = RK809SpeakerRoute(settings["audio_card_id"], playback_route=settings["audio_playback_route"])
         if audio_factory is None:
             def audio_factory(config, on_error=None):
                 return PatchXAudioIO(config, on_error, speaker_route=audio_route, volume=volume_port)

@@ -121,7 +121,7 @@
     },
     {
       "path": "apps/patchx/audio.py",
-      "sha256": "407a0a173d24b2bd3fe7e913bddd88ce0db9691fa45cf1337fbe738705a8f280"
+      "sha256": "8489346cbc90f71b336c5bac9765ce6c300da5e2f8ef73c0b570117cb5e58e6b"
     },
     {
       "path": "apps/patchx/business.py",
@@ -390,11 +390,11 @@
     },
     {
       "path": "apps/patchx/__main__.py",
-      "sha256": "5e26a7c1b89b4580dae9f80d5bafc3883de82579982b5886712bc4e6ac6f1501"
+      "sha256": "b35172300ebb46ee0751cb3a4e2016594fc76e385d64b31dc0d3979978b57b7a"
     },
     {
       "path": "apps/patchx/audio.py",
-      "sha256": "650cad96476d89d7eb17afe75ddc3972737039ebdd2eb64ba33647e2c3bf1772"
+      "sha256": "8489346cbc90f71b336c5bac9765ce6c300da5e2f8ef73c0b570117cb5e58e6b"
     },
     {
       "path": "apps/patchx/business.py",
@@ -406,7 +406,7 @@
     },
     {
       "path": "apps/patchx/config.py",
-      "sha256": "1fc088f85bcecfe5d44b4a74c65bddcee575fe84dafcb9990e648d2ef2404763"
+      "sha256": "5f684ab6f61b121d242a523e26a21aeae2fca1f4bc3495ae223fe20001b94a90"
     },
     {
       "path": "apps/patchx/demo.json",
@@ -458,7 +458,7 @@
     },
     {
       "path": "deploy/patchx/AUDIO.md",
-      "sha256": "3d3d8cbf1808d5903d3b242a188194bb544b681d8343d048734c3f486f0a3f59"
+      "sha256": "7064dd39344556f6440f071f0d2d6a552c0443fff7817f3b0a3f4f5d19b0ec4e"
     },
     {
       "path": "deploy/patchx/alsa-rk3568.conf",
@@ -466,11 +466,11 @@
     },
     {
       "path": "deploy/patchx/live.example.json",
-      "sha256": "57199f05016c03ae200df603e0146225af7adc7fea941c6ec6de9482f67f499b"
+      "sha256": "32260fb4389ae688bac75ab8ee565df25820f6f422130830f9eb6b0484576d53"
     },
     {
       "path": "docs/CAMERA.md",
-      "sha256": "323688fa93c010c08a188889e17b1c7c9f3036de137db3424b6a2f70aac7d6e8"
+      "sha256": "5bb61c85dc203616bd7936610bdc2d5cd02f24ad44aa6a2a4465ddccf4b4f650"
     },
     {
       "path": "docs/GETTING_STARTED.md",
@@ -498,7 +498,7 @@
     },
     {
       "path": "tests/test_patchx_audio.py",
-      "sha256": "86b0a6c74c3e8623e3d79601a7fc8394dafb817347ea6b2505d9bf2f88ac9866"
+      "sha256": "b17d0bf7409880e528fc4708cfb2c414f37574aad1384def19826b2a5c3c1658"
     },
     {
       "path": "tests/test_patchx_audio_integration.py",

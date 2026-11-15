@@ -63,4 +63,8 @@ band=a
 
 后续加入配套用户态 ISP 与 JPEG 编码后，两条原相机请求经真实 loopback WebSocket 返回 640×480 JPEG，分别为 27,353 和 27,947 字节，导出校验后查看未见整体发绿，仍存在亮区截断和色边。此结果覆盖有限拍照与回传，不表示 Android 3A 成像等价。
 
-本分支 `rk3568-patchx-product.dts` 生成的 DTB 与上述最终相机 pre-overlay DTB 做全量静态语义对照：983 个节点、4990 个属性、773 个 phandle 及 FDT 元数据全部相同。产品入口保留原显示/音频入口，再加入相机配置；本次发布未重新构建或启动完整产品 Image。来源及散列见 [SOURCE.json](SOURCE.json)。
+早期产品 DTB 与上述最终相机 pre-overlay DTB 做过全量静态语义对照，覆盖 983 个节点、4990 个属性、773 个 phandle 及 FDT 元数据。该记录对应加入音频布线属性前的源码。来源及散列见 [SOURCE.json](SOURCE.json)。
+
+## 2026 年 11 月 15 日构建验证
+
+移除 Linux 根目录的 Android 构建文件后，完成产品配置的 Image、全部模块和产品 DTB 构建。产物中的 codec 节点包含 `rockchip,hp-no-mic-uses-spk-ctl`。这批产物待旧板接回后做 RAM 启动、功放和返回 Android 验证。实际录放音及流式问答的既有板端结果见 [在线语音说明](../../software/linux/docs/ONLINE_VOICE.md)。

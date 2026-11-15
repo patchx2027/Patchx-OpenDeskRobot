@@ -35,6 +35,7 @@
         pinctrl-0 = <&i2s1m0_mclk>;
         hp-volume = <30>;
         spk-volume = <12>;
+        rockchip,hp-no-mic-uses-spk-ctl;
         spk-ctl-gpios = <&gpio4 RK_PC4 GPIO_ACTIVE_LOW>;
         mic-in-differential;
         status = "okay";

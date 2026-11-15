@@ -19,6 +19,8 @@
   "patchx": {
     "client_ip": "192.0.2.10",
     "audio_enabled": false,
+    "audio_card_id": "rockchiprk809co",
+    "audio_playback_route": "HP_NO_MIC",
     "volume_initial": 8,
     "display_enabled": false,
     "display_device": "/dev/fb0",

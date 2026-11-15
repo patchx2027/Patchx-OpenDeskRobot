@@ -27,7 +27,7 @@
     "sound/core/pcm_dmaengine.c": "189e4e4fb59a683ae050e96fbe90f7fc09d5ad7afe755d3eca6623fbb971da77",
     "sound/core/pcm_memory.c": "cb883d943072d36c8b3d7f881f89b641c683597412014fcb7fe391f30cf0d4f4",
     "sound/core/pcm_native.c": "bc34db0aabe8b523172403a4095afeac5544434e15a05884ca99f6b77d48c47d",
-    "sound/soc/codecs/rk817_codec.c": "07db6ebb918682e136c59a62c0466ca4e18f18c900e9b8089b0df664eea84c00",
+    "sound/soc/codecs/rk817_codec.c": "b4148067a1c2e383a68233e32ddb2417d638d33c586d65e0f396cb7144cb10cf",
     "sound/soc/generic/simple-card-utils.c": "1cc6583e7573809ecc2c7df0602a27d9404c9d59adfee083a73f706ef76f65c4",
     "sound/soc/rockchip/rockchip_i2s_tdm.c": "b987171f222e3644a2df9a95499ee55d2bccd54770d6f5a4dd89f7f944aabe25",
     "sound/soc/soc-component.c": "ea81b958a6cdf035a29de112e07f15f55f774d4f67a02b68ca1eae6c0ce5d85c",
@@ -44,17 +44,11 @@
   "device_tree": {
     "entry": "arch/arm64/boot/dts/rockchip/rk3568-patchx.dts",
     "reference_dtb_sha256": "98595cf813d7755de52ad0b35867f154f5fa0ab6b0309064fe2ef4e4b281bb33",
-    "semantic_comparison": {
-      "equal": true,
-      "nodes": 972,
-      "properties": 4946,
-      "metadata_equal": true
-    },
     "source_files": {
       "rk3568-patchx-audio.dtsi": {
-        "bytes": 1838,
-        "sha256": "0b4f4a3d1a3f30682e3a82fe0498df1f36cfbb0ec80e5c7294957df661800bbc",
-        "lines": 62
+        "bytes": 1879,
+        "sha256": "1c824e629d22af5dc814c0b870e5cbca6de16e2595163d7fdc2fdc026d3e48e5",
+        "lines": 63
       },
       "rk3568-patchx-base.dtsi": {
         "bytes": 3047,
@@ -91,9 +85,15 @@
         "sha256": "70631633219f27f2f18aae9b7a908bd935b0919104b03e8e48569c5b15b2bf63",
         "lines": 23
       }
+    },
+    "archived_reference_semantic_comparison": {
+      "equal": true,
+      "nodes": 972,
+      "properties": 4946,
+      "metadata_equal": true
     }
   },
-  "scope": "Kernel driver source derives from the audio-v5 inputs with the 3568A RK817 amplifier adaptation. Product additions retain the actual in-tree codec configuration and reconstruct the final camera device tree. DT semantic comparison is static artifact verification, not a new complete Image build or whole-product acceptance. Individual board observations and conditions are documented in VALIDATION.md.",
+  "scope": "Kernel driver source derives from the audio-v5 inputs. The product device tree now declares the HP_NO_MIC amplifier wiring. Archived semantic comparisons refer to the pre-property DTB sources; source hashes describe the current tree. Individual board observations and build scope are documented in VALIDATION.md.",
   "product_config": {
     "path": "arch/arm64/configs/patchx_rk3568_product.config",
     "sha256": "d4170c250b3c45dc1879fcd0cd25335213f71dc8e4cb312c1383d764345d0952",
@@ -105,20 +105,11 @@
     "entry": "arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dts",
     "origin": "Final camera reset-polarity-v2 pre-overlay DTB; original OV5695 driver, reset flags 1",
     "reference_dtb_sha256": "7f2dd6ed2e274889245972c0ac7f01ecaacaa017260b1f6231cf9eaefa17abe1",
-    "semantic_comparison": {
-      "equal": true,
-      "nodes": 983,
-      "properties": 4990,
-      "phandles": 773,
-      "metadata_equal": true,
-      "includes_symbols": true,
-      "method": "C preprocessor and DTC -@; compare every node path, raw property value, reserve map and FDT version/CPU metadata"
-    },
     "source_files": {
       "rk3568-patchx-audio.dtsi": {
-        "bytes": 1838,
-        "sha256": "0b4f4a3d1a3f30682e3a82fe0498df1f36cfbb0ec80e5c7294957df661800bbc",
-        "lines": 62
+        "bytes": 1879,
+        "sha256": "1c824e629d22af5dc814c0b870e5cbca6de16e2595163d7fdc2fdc026d3e48e5",
+        "lines": 63
       },
       "rk3568-patchx-base.dtsi": {
         "bytes": 3047,
@@ -165,6 +156,15 @@
         "sha256": "70631633219f27f2f18aae9b7a908bd935b0919104b03e8e48569c5b15b2bf63",
         "lines": 23
       }
+    },
+    "archived_reference_semantic_comparison": {
+      "equal": true,
+      "nodes": 983,
+      "properties": 4990,
+      "phandles": 773,
+      "metadata_equal": true,
+      "includes_symbols": true,
+      "method": "C preprocessor and DTC -@; compare every node path, raw property value, reserve map and FDT version/CPU metadata"
     }
   },
   "historical_runtime_artifacts": {

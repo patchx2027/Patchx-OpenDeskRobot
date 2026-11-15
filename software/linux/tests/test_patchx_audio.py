@@ -308,6 +308,24 @@ class SpeakerRouteTests(unittest.TestCase):
         self.assertEqual([call[-1] for call in fixture.calls if call[3] == "cset"], ["HP_NO_MIC", "OFF"])
         self.assertFalse(route.snapshot()["cleanup_uncertain"])
 
+    def test_configured_card_and_spk_route_are_used_and_restored(self):
+        fixture = MixerFixture()
+        route = RK809SpeakerRoute("BoardCodec", runner=fixture, playback_route="SPK")
+        self.assertTrue(route.acquire())
+        self.assertEqual(fixture.values["Playback Path"], 2)
+        self.assertTrue(route.release())
+        self.assertTrue(all(call[2] == "BoardCodec" for call in fixture.calls))
+        self.assertEqual([call[-1] for call in fixture.calls if call[3] == "cset"], ["SPK", "OFF"])
+
+    def test_pcm_names_can_be_configured(self):
+        adapter = PatchXAudioIO(
+            {"capture_device": "board_mic", "playback_device": "board_speaker"},
+            speaker_route=RK809SpeakerRoute(runner=MixerFixture()),
+        )
+        self.assertIn("board_mic", adapter._command(True))
+        self.assertIn("board_speaker", adapter._command(False))
+        self.assertEqual(adapter.snapshot()["playback_device"], "board_speaker")
+
     def test_bad_control_or_nonoff_baseline_writes_nothing(self):
         for bad_label, current in ((True, 0), (False, 1)):
             fixture = MixerFixture()

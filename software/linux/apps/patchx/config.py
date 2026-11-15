@@ -10,6 +10,7 @@ from apps.companion.config import validate
 DEFAULTS = {"client_ip": "", "backlight_enabled": False, "backlight_path": "",
             "display_enabled": False, "display_device": "/dev/fb0", "motor_port": "",
             "audio_enabled": False, "volume_initial": 8,
+            "audio_card_id": "rockchiprk809co", "audio_playback_route": "HP_NO_MIC",
             "camera_enabled": False, "camera_program": "", "camera_work_dir": "",
             "camera_timeout_s": 45.0, "mqtt_enabled": False, "mqtt_broker": "",
             "mqtt_port": 8883, "mqtt_tls": True, "mqtt_username_env": "PATCHX_MQTT_USERNAME",
@@ -49,6 +50,11 @@ def validate_product(values):
         raise ValueError("motor_port requires live mode")
     if type(product["volume_initial"]) is not int or not 0 <= product["volume_initial"] <= 15:
         raise ValueError("volume_initial must be 0..15")
+    if not isinstance(product["audio_card_id"], str) or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]{0,30}", product["audio_card_id"]):
+        raise ValueError("invalid audio_card_id")
+    if product["audio_playback_route"] not in ("SPK", "HP_NO_MIC"):
+        raise ValueError("audio_playback_route must be SPK or HP_NO_MIC")
     if product["audio_enabled"] and (voice["mode"] != "live" or voice.get("aec_enabled")):
         raise ValueError("board audio requires live mode and the basic route without AEC")
     timeout = product["camera_timeout_s"]

@@ -120,4 +120,4 @@ exec /absolute/python3 -B -m apps.patchx.isp_capture \
 
 ## 已有验证范围
 
-已有有限板端记录覆盖 SDK 生命周期、两次应用拍摄、640×480 JPEG 和本地真实 WebSocket 回传。画面未见之前的整体绿偏，但亮区截断、色边以及与 Android 的 3A/长期画质等效尚未验收。在线语音另有主机问答验证结果，板端真实录放音范围见 [在线语音说明](ONLINE_VOICE.md)。
+已有有限板端记录覆盖 SDK 生命周期、两次应用拍摄、640×480 JPEG 和本地真实 WebSocket 回传。画面未见之前的整体绿偏，但亮区截断、色边以及与 Android 的 3A/长期画质等效尚未验收。旧板原生 Linux 已完成一次实麦流式问答，配置与实测范围见 [在线语音说明](ONLINE_VOICE.md)。

@@ -104,6 +104,7 @@ struct rk817_codec_priv {
 	long int capture_path;
 
 	struct gpio_desc *spk_ctl_gpio;
+	bool hp_no_mic_uses_spk_ctl;
 	struct gpio_desc *hp_ctl_gpio;
 	int spk_mute_delay;
 	int hp_mute_delay;
@@ -1587,20 +1588,6 @@ static int rk817_hw_params(struct snd_pcm_substream *substream,
 	return ret < 0 ? ret : 0;
 }
 
-/* The 3568A external amp is fed by the codec's headphone outputs. */
-static bool rk817_3568a_hp_uses_spk_ctl(void)
-{
-	struct device_node *root = of_find_node_by_path("/");
-	const char *model;
-	bool matches = false;
-
-	if (!of_property_read_string(root, "model", &model))
-		matches = !strcmp(model, "3568A Linux reconstruction - Wi-Fi candidate") ||
-			  !strcmp(model, "3568A Linux reconstruction - firstboot candidate");
-	of_node_put(root);
-	return matches;
-}
-
 static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
 {
 	struct snd_soc_component *component = dai->component;
@@ -1685,7 +1672,7 @@ static int rk817_digital_mute_dac(struct snd_soc_dai *dai, int mute, int stream)
 				goto err_mute;
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_SPK,
 					     rk817->playback_path == HP_NO_MIC &&
-					     rk817_3568a_hp_uses_spk_ctl());
+					     rk817->hp_no_mic_uses_spk_ctl);
 			rk817_codec_ctl_gpio(rk817, CODEC_SET_HP, 1);
 			break;
 		case SPK_HP:
@@ -2513,6 +2500,9 @@ static int rk817_codec_parse_dt_property(struct device *dev,
 
 	rk817->shared_params_enabled = of_property_read_bool(node,
 						  "rockchip,checked-shared-params-48k");
+
+	rk817->hp_no_mic_uses_spk_ctl =
+		of_property_read_bool(node, "rockchip,hp-no-mic-uses-spk-ctl");
 
 	rk817->hp_ctl_gpio = devm_gpiod_get_optional(dev, "hp-ctl",
 						  GPIOD_OUT_LOW);

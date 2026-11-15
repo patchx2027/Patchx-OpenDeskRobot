@@ -10,7 +10,7 @@
 
 [patchx_rk3568_product.config](../../arch/arm64/configs/patchx_rk3568_product.config) 是树内 codec 构建使用的完整 `.config`，其中 `CONFIG_SND_SOC_RK817=m`。它不是精简 defconfig，按下列步骤复制到输出目录。
 
-本流程用于从本分支生成配套产物。已完成的实机记录使用原 audio-v5 Image、另行构建的树内 codec 模块及相机设备树；本次源码整合仅进行了设备树制品的静态语义对照，没有重新构建或启动完整产品 Image。
+本流程从本分支生成一组配套的内核产物。历次实机测试所用的环境和范围见 [实测说明](VALIDATION.md)。
 
 ## 1. 配置和构建内核
 
@@ -75,7 +75,21 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
     CROSS_COMPILE=aarch64-linux-gnu- M="$CODEC_OUT" modules || exit 1
 ```
 
-## 启动适配
+## 准备启动环境
+
+将模块安装到自己的 Linux 根文件系统暂存目录。以下命令沿用前文的构建变量：
+
+```sh
+ROOTFS="$BUILD_ROOT/rootfs"
+mkdir -p "$ROOTFS" || exit 1
+make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
+    CROSS_COMPILE=aarch64-linux-gnu- INSTALL_MOD_PATH="$ROOTFS" modules_install || exit 1
+```
+
+内核模块安装在 `$ROOTFS/lib/modules/<kernel.release>/`。把该目录加入目标 Linux 根文件系统，并在需要加载模块的阶段提供模块依赖索引。启动环境还需提供与板卡匹配的 loader、早期用户空间和完整的 Linux 根文件系统，以及所用外设的固件。
+
+旧板的 RAM 测试包由板卡专用启动链组装。组装时以同一轮构建的 Image、产品 DTB 和模块为输入，核对 `include/config/kernel.release`；若启动脚本校验 release 或散列，也按新产物更新。选择 RAM 启动后，验收应包括启动产物身份、播放期间功放使能、播放结束后回到 OFF，以及重启回原厂 Android。
+
 
 本设备树保留实测 RAM 启动链的内存布局。把产物接入自己的 loader 时，同时查看入口 DTS 和 `rk3568-patchx-base.dtsi`：
 

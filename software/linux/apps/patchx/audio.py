@@ -5,6 +5,7 @@ ALSA conversion to the RK809 native format. CAE, wake-word and AEC equivalence
 are not provided by this leaf. Speaker ownership is injected explicitly.
 """
 import array
+import os
 import queue
 import re
 import select
@@ -12,7 +13,6 @@ import subprocess
 import sys
 import threading
 import time
-import os
 
 from apps.companion.audio import AudioError, AudioIO, PcmAudio, PcmStreamChunk
 from .protocol import android_int, legacy_target
@@ -86,10 +86,13 @@ class RK809SpeakerRoute:
         "Resume Path": ("OFF", "ON"),
     }
 
-    def __init__(self, card_id="rockchiprk809co", runner=None):
-        if card_id != "rockchiprk809co":
-            raise ValueError("this route requires the verified RK809 card identity")
+    def __init__(self, card_id="rockchiprk809co", runner=None, *, playback_route="HP_NO_MIC"):
+        if not isinstance(card_id, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,30}", card_id):
+            raise ValueError("invalid RK809 ALSA card ID")
+        if playback_route not in ("SPK", "HP_NO_MIC"):
+            raise ValueError("unsupported RK809 playback route")
         self.card_id = card_id
+        self.playback_route = playback_route
         self._runner = runner or subprocess.run
         self._lock = threading.RLock()
         self._active = False
@@ -134,16 +137,16 @@ class RK809SpeakerRoute:
             self._active = True
             self._changed = True
             try:
-                self._call("cset", "Playback Path", "HP_NO_MIC")
+                self._call("cset", "Playback Path", self.playback_route)
                 after = self._all()
-                if after != {"Playback Path": self.CONTROLS["Playback Path"].index("HP_NO_MIC"), "Capture MIC Path": 0, "Resume Path": 0}:
-                    raise AudioError("RK809 HP_NO_MIC route did not verify")
+                if after != {"Playback Path": self.CONTROLS["Playback Path"].index(self.playback_route), "Capture MIC Path": 0, "Resume Path": 0}:
+                    raise AudioError(f"RK809 {self.playback_route} route did not verify")
                 return True
             except Exception as error:
                 self.cleanup_uncertain = True
                 self.last_error = str(error)
                 self.release()
-                raise AudioError("RK809 HP_NO_MIC route could not be established") from error
+                raise AudioError(f"RK809 {self.playback_route} route could not be established") from error
 
     def release(self):
         with self._lock:
@@ -176,8 +179,9 @@ class PatchXAudioIO(AudioIO):
         board_config = dict(config)
         if board_config.get("aec_enabled"):
             raise ValueError("this basic USB route does not provide verified AEC")
-        board_config["capture_device"] = CAPTURE_DEVICE
-        board_config["playback_device"] = PLAYBACK_DEVICE
+        for key, default in (("capture_device", CAPTURE_DEVICE), ("playback_device", PLAYBACK_DEVICE)):
+            if board_config.get(key, "default") == "default":
+                board_config[key] = default
         super().__init__(board_config, on_error)
         self.speaker_route = speaker_route
         self.volume = volume if volume is not None else SoftwareVolume()
@@ -386,5 +390,5 @@ class PatchXAudioIO(AudioIO):
         return {"available": not self.cleanup_uncertain, "cleanup_uncertain": self.cleanup_uncertain,
                 "capture_active": not self._capture_stop.is_set(), "speaker_owned": self._speaker_owned,
                 "error": self.last_error, "volume": self.volume.snapshot(),
-                "capture_device": CAPTURE_DEVICE, "playback_device": PLAYBACK_DEVICE,
+                "capture_device": self.config["capture_device"], "playback_device": self.config["playback_device"],
                 "aec_verified": False, "wake_word_verified": False}

@@ -32,6 +32,8 @@ Required properties:
   Boolean. Indicate MIC input are differential, rather than single-ended.
 - pdmdata-out-enable:
   Boolean. Indicate pdmdata output is enable or disable.
+- rockchip,hp-no-mic-uses-spk-ctl: Keep the external amplifier connected to
+  spk-ctl-gpios enabled while the HP_NO_MIC playback path is unmuted.
 - use-ext-amplifier:
   Boolean. Indicate use external amplifier or not.
 - adc-for-loopback:
