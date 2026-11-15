@@ -73,7 +73,8 @@ def create_runtime(config, audio_factory=None, codec_factory=None, transport_fac
             audio_route = RK809SpeakerRoute(settings["audio_card_id"], playback_route=settings["audio_playback_route"])
         if audio_factory is None:
             def audio_factory(config, on_error=None):
-                return PatchXAudioIO(config, on_error, speaker_route=audio_route, volume=volume_port)
+                return PatchXAudioIO(config, on_error, speaker_route=audio_route, volume=volume_port,
+                                     wake_aec_library=settings["wake_aec_library"])
     business = PatchXBusiness(backlight=backlight, volume=volume_port)
     if motor_controller is None and settings["motor_port"]:
         from .motor import MotorController
@@ -88,11 +89,19 @@ def create_runtime(config, audio_factory=None, codec_factory=None, transport_fac
     if transport_factory is None:
         def transport_factory(config, on_message, on_error):
             return PatchXCloudTransport(config, on_message, on_error, settings["client_ip"])
+    handsfree = wake_prompt = None
+    if settings["wake_assets"]:
+        from .handsfree import SpeechDetector, load_wake_prompt
+        handsfree = SpeechDetector(settings["wake_assets"])
+        if settings["wake_prompt_wav"]:
+            wake_prompt = load_wake_prompt(settings["wake_prompt_wav"])
     # All three must be explicit: Companion.connect replaces the group if audio is None.
     core = PatchXCompanion(voice, business, audio_factory=audio_factory or AudioIO,
                           codec_factory=codec_factory or OpusCodec, transport_factory=transport_factory,
                           camera_backend=camera_backend, camera_timeout_s=settings["camera_timeout_s"],
-                          display_service=display_service, motor_controller=motor_controller)
+                          display_service=display_service, motor_controller=motor_controller,
+                          handsfree=handsfree, wake_prompt=wake_prompt,
+                          wake_barge_in=settings["wake_barge_in"])
     if settings["mqtt_enabled"]:
         core.configure_mqtt(broker=settings["mqtt_broker"], port=settings["mqtt_port"], tls=settings["mqtt_tls"],
             device_id=voice["device_id"], env_names={"username": settings["mqtt_username_env"],

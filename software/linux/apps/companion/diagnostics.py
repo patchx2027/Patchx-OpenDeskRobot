@@ -14,6 +14,8 @@ import time
 
 _TEMPLATES = {
     "service_started": ("info", "服务启动；麦克风默认关闭"),
+    "wake_detected": ("info", "本地唤醒词已识别"),
+    "voice_interrupt": ("info", "检测到插话，已停止播报"),
     "continuous_started": ("info", "连续对话已开启"),
     "microphone_muted": ("info", "麦克风已关闭"),
     "microphone_enabled": ("info", "麦克风已允许开启"),

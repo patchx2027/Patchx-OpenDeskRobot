@@ -31,6 +31,18 @@ class ProductAudioTests(unittest.TestCase):
                 'patchx': dict({'client_ip': '192.0.2.1', 'audio_enabled': True,
                                'volume_initial': 8}, **settings)}
 
+    def test_handsfree_keeps_array_reference_on_the_microphone_clock(self):
+        aec = mock.Mock()
+        with mock.patch('apps.companion.aec.EchoCanceller', return_value=aec):
+            audio = PatchXAudioIO({}, speaker_route=Route(), wake_aec_library='/example/aec.so')
+        self.assertEqual(audio._capture_frame_bytes(), 960 * 8 * 2)
+        command = audio._command(True)
+        self.assertEqual(command[command.index('-D') + 1], 'patchx_capture_array')
+        self.assertEqual(command[command.index('-c') + 1], '8')
+        audio._capture_pcm(struct.pack('<8h', 123, 2, 3, 4, 5, 6, 2000, 3000))
+        aec.process_synchronous.assert_called_once_with(struct.pack('<h', 123), struct.pack('<h', 2500))
+        audio.stop()
+
     def test_handshake_constructs_real_leaf_without_opening_and_shares_business_volume(self):
         with mock.patch('apps.patchx.audio.RK809SpeakerRoute', return_value=Route()):
             runtime = entry.create_runtime(self.config(), codec_factory=FakeCodec,

@@ -143,20 +143,7 @@ class Companion:
                     elif kind == "message":
                         self._message(payload)
                     elif kind == "pcm":
-                        if (self.data["state"] == "listening" or (self._duplex() and self.data["state"] in ("thinking", "speaking"))) and not self.data["muted"] and payload[0] == self.capture_epoch:
-                            pcm = payload[1]
-                            peak = max((abs(value[0]) for value in struct.iter_unpack(
-                                "<h", pcm[:len(pcm) // 2 * 2])), default=0)
-                            with self.lock:
-                                self.data["metrics"]["capture_peak_amplitude"] = max(
-                                    self.data["metrics"]["capture_peak_amplitude"], peak)
-                            if self.config.get("local_asr_streaming"):
-                                self.transport.send_pcm(pcm)
-                            else:
-                                self.transport.send(self.codec.encode(pcm))
-                            self.turn_audio_frames_sent += 1
-                            with self.lock:
-                                self.data["metrics"]["audio_frames_sent"] += 1
+                        self._pcm(*payload)
                     elif kind == "error":
                         self._fail(str(payload))
                     elif kind == "face":
@@ -178,6 +165,24 @@ class Companion:
         finally:
             self._release()
             self._set(state="offline", connected=False)
+
+    def _pcm(self, epoch, pcm):
+        if (self.data["state"] == "listening" or (self._duplex() and self.data["state"] in ("thinking", "speaking"))) and not self.data["muted"] and epoch == self.capture_epoch:
+            peak = max((abs(value[0]) for value in struct.iter_unpack(
+                "<h", pcm[:len(pcm) // 2 * 2])), default=0)
+            with self.lock:
+                self.data["metrics"]["capture_peak_amplitude"] = max(
+                    self.data["metrics"]["capture_peak_amplitude"], peak)
+            if self.config.get("local_asr_streaming"):
+                self.transport.send_pcm(pcm)
+            else:
+                self.transport.send(self.codec.encode(pcm))
+            self.turn_audio_frames_sent += 1
+            with self.lock:
+                self.data["metrics"]["audio_frames_sent"] += 1
+
+    def _keep_capture_for_tts(self):
+        return self._duplex()
 
     def _safe_tick(self):
         try:
@@ -362,7 +367,7 @@ class Companion:
                 return
             if self.data["state"] not in ("idle", "muted"):
                 raise ValueError("请先停止当前回答，再开始新一轮对话")
-            self._interrupt(keep_capture=self.config.get("aec_enabled", False))
+            self._interrupt(keep_capture=self.config.get("aec_enabled", False) or self._keep_capture_for_tts())
             self.capture_epoch += 1
             epoch = self.capture_epoch
             self.turn_audio_frames_sent = 0
@@ -376,7 +381,7 @@ class Companion:
             self._set(latency_ms={})
             self._set(input_state="waiting_speech" if self._duplex() else "off", next_transcript="")
             self._set(state="listening", transcript="", transcript_partial=False, reply="", error="", emotion="neutral", voice_progress="waiting_speech" if self.data["continuous"] else "recording")
-            self._send("listen", state="start", mode="auto" if self.data["continuous"] else self.config.get("listen_mode", "manual"))
+            self._send("listen", state="start", mode="auto" if self.data["continuous"] and self.config.get("local_asr_streaming") else self.config.get("listen_mode", "manual"))
             generation = self.generation
             if self.audio:
                 self.audio.start(lambda pcm: self.post("pcm", (epoch, pcm), generation))
@@ -566,7 +571,7 @@ class Companion:
         elif kind == "tts":
             state = value.get("state")
             if state == "start" and self.data["state"] in ("listening", "thinking") and not self.data["muted"]:
-                if not self._duplex():
+                if not self._keep_capture_for_tts():
                     self.capture_epoch += 1
                     if self.audio:
                         self.audio.pause_capture() if self.config.get("aec_enabled") else self.audio.stop_capture()
@@ -614,7 +619,7 @@ class Companion:
             if self.capture_stopped_at:
                 timing["stop_to_audio_ms"] = round((first_write - self.capture_stopped_at) * 1000, 1)
             self._set(latency_ms=timing)
-        if self.data["continuous"] and not self.config.get("standalone_voice", False) and now >= self.auto_until:
+        if self.data["continuous"] and self.auto_until and now >= self.auto_until:
             self.diagnostics.emit("browser_lease_expired")
             self._action("mute")
             return

@@ -293,25 +293,32 @@ class AudioIO:
         if self.on_error:
             self.on_error(self.last_error)
 
+    def _capture_frame_bytes(self):
+        return FRAME_BYTES
+
+    def _capture_pcm(self, data):
+        return self._aec.process(data, time.monotonic()) if self._aec else data
+
     def _record(self, callback):
         try:
             process = self._capture
             fd = process.stdout.fileno()
             pending = bytearray()
+            frame_bytes = self._capture_frame_bytes()
             while not self._stop.is_set() and not self._capture_stop.is_set():
                 if not select.select([fd], [], [], 0.1)[0]:
                     if process.poll() is not None:
                         raise AudioError("arecord exited: %s (check device/permissions)" % process.returncode)
                     continue
-                chunk = os.read(fd, FRAME_BYTES - len(pending))
+                chunk = os.read(fd, frame_bytes - len(pending))
                 if not chunk:
                     raise AudioError("arecord closed its stream (check device/permissions)")
                 pending.extend(chunk)
-                if len(pending) == FRAME_BYTES:
+                if len(pending) == frame_bytes:
                     if not self._capture_stop.is_set():
                         with self._lock:
                             target = self._capture_callback
-                        clean = self._aec.process(bytes(pending), time.monotonic()) if self._aec else bytes(pending)
+                        clean = self._capture_pcm(bytes(pending))
                         with self._lock:
                             if target is not self._capture_callback:
                                 target = None

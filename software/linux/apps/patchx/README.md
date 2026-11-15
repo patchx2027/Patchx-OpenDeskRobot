@@ -82,4 +82,4 @@ python3 -m apps.patchx.motor_ota --port /dev/ttyS0 /path/to/PatchX_edu.bin
 
 背光修改会读回结果，失败时尝试恢复；无法确认恢复时报告 `uncertain=true`。显示端保存原可见像素，关闭时核对布局后恢复并读回。音频清理失败会保留资源所有权并拒绝重连；此时应先查清设备占用和子进程状态。
 
-基础音频没有复现 Android 的 CAE、阵列 AEC 或离线唤醒。在线配置、声卡选择和启动命令统一见 [开始使用](../../docs/GETTING_STARTED.md)。
+本地唤醒和播报打断的模型及回声消除库见 [在线语音配置](../../docs/ONLINE_VOICE.md#语音唤醒和连续对话)。在线配置、声卡选择和启动命令统一见 [开始使用](../../docs/GETTING_STARTED.md)。

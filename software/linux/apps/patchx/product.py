@@ -1,5 +1,7 @@
 """PatchX product extension; inherits the bounded session/generation event gate."""
 import queue
+import time
+from collections import deque
 from apps.companion.core import Companion
 from .protocol import BUSINESS_TYPES
 from .protocol import image_message, listen_mode_message, parse_business
@@ -7,11 +9,26 @@ from .protocol import image_message, listen_mode_message, parse_business
 
 class PatchXCompanion(Companion):
     def __init__(self, voice_config, business, camera_backend=None, camera_timeout_s=45.0,
-                 display_service=None, motor_controller=None, **factories):
+                 display_service=None, motor_controller=None, handsfree=None, wake_prompt=None,
+                 wake_barge_in=False, **factories):
         self.display = display_service
         self.motor = motor_controller
         self.audio_cleanup_uncertain = False
+        self.handsfree = handsfree
+        self.wake_barge_in = wake_barge_in
+        self.wake_prompt = wake_prompt
+        self.wake_prompt_pending = False
+        self.wake_armed = handsfree is not None
+        self.wake_connecting = False
+        self.standby_audio = None
+        self.standby_retry_at = 0.
+        self.barge_frames = deque(maxlen=12)
+        self.barge_speech_frames = 0
         super().__init__(voice_config, **factories)
+        if self.handsfree:
+            self.data["capabilities"].update(wake_word=True, automatic_barge_in=wake_barge_in)
+            self.data["control_mode"] = "device"
+            self.data["wake_waiting"] = False
         self.business = business
         self.camera = None
         self.mqtt = None
@@ -137,7 +154,24 @@ class PatchXCompanion(Companion):
         if errors:
             raise RuntimeError("PatchX shutdown incomplete: " + ", ".join(errors))
 
+    def _stop_standby(self):
+        if self.standby_audio is not None:
+            audio, self.standby_audio = self.standby_audio, None
+            self.capture_epoch += 1
+            try:
+                if audio.stop() is False:
+                    raise RuntimeError("standby audio cleanup is uncertain")
+            except Exception:
+                self.audio_cleanup_uncertain = True
+                self.standby_audio = audio
+                raise
+            finally:
+                self._set(wake_waiting=False)
+
     def _release(self):
+        self.wake_prompt_pending = False
+        self._stop_standby()
+        self.barge_frames.clear()
         self.special_listen_mode = ""
         self.camera_epoch += 1
         if self.camera is not None:
@@ -159,9 +193,77 @@ class PatchXCompanion(Companion):
                 self.audio = audio
 
     def _action(self, action):
+        if action == "listen" and self.wake_prompt_pending:
+            raise ValueError("请等待唤醒提示播完")
+        if self.handsfree and action in ("mute", "disconnect"):
+            self.wake_prompt_pending = False
+            self.wake_armed = False
+            self.wake_connecting = False
+            self._stop_standby()
+        elif self.handsfree and action == "unmute":
+            self.wake_armed = True
         if action == "connect" and self.audio_cleanup_uncertain:
             raise ValueError("音频退出未完成，不能重新打开设备")
         super()._action(action)
+
+    def _start_wake_listening(self):
+        self.wake_prompt_pending = False
+        self._action("unmute")
+        self._set(continuous=True)
+        self._action("listen")
+
+    def _tick(self):
+        super()._tick()
+        if self.wake_prompt_pending and not self.audio.playback_busy():
+            self._start_wake_listening()
+        if (not self.wake_armed or self.audio_cleanup_uncertain or self.standby_audio is not None
+                or self.data["state"] not in ("offline", "error") or time.monotonic() < self.standby_retry_at):
+            return
+        self.wake_connecting = False
+        self.standby_retry_at = time.monotonic() + 3.
+        self.handsfree.reset_wake()
+        self.capture_epoch += 1
+        epoch, generation = self.capture_epoch, self.generation
+        self.standby_audio = self.audio_factory(self.config, on_error=lambda _: self.post(
+            "error", "唤醒麦克风无法采集", generation))
+        self.standby_audio.start(lambda pcm: self.post("pcm", (epoch, pcm), generation))
+        self._set(wake_waiting=True)
+
+    def _idle(self, progress="idle"):
+        super()._idle(progress)
+        if self.handsfree and self.auto_due:
+            self.auto_due = time.monotonic() + .15
+
+    def _keep_capture_for_tts(self):
+        return bool(self.handsfree and self.data["continuous"]) or super()._keep_capture_for_tts()
+
+    def _pcm(self, epoch, pcm):
+        if epoch != self.capture_epoch:
+            return
+        if self.standby_audio is not None:
+            if self.handsfree.wake(pcm):
+                self.diagnostics.emit("wake_detected")
+                self.wake_connecting = True
+                self._action("connect")
+            return
+        if (self.wake_barge_in and self.data["continuous"] and self.data["state"] == "speaking"
+                and not self.data["muted"]):
+            self.barge_frames.append(pcm)
+            if not self.audio.playback_busy():
+                return
+            self.barge_speech_frames = self.barge_speech_frames + 1 if self.handsfree.speech(pcm) else 0
+            if self.barge_speech_frames >= 3:
+                self.audio.interrupt()
+                self.diagnostics.emit("voice_interrupt")
+                self.accept_audio = self.tts_ended = False
+                self._send("interrupt")
+                self.deadline = 0.
+                self._set(state="listening", emotion="neutral", voice_progress="recording")
+                for frame in self.barge_frames:
+                    super()._pcm(epoch, frame)
+                self.barge_frames.clear()
+            return
+        super()._pcm(epoch, pcm)
 
     def _camera_completed(self, completion):
         self.post("message", completion, generation=completion.token[0])
@@ -239,4 +341,27 @@ class PatchXCompanion(Companion):
             if command and command["kind"] in ("expression", "greeting"):
                 self._display_update(expression=True)
             return
+        previous = self.data["state"]
+        if (self.handsfree and self.data["continuous"] and kind == "goodbye"
+                and value.get("session_id") in (None, self.session)):
+            self._release()
+            self._set(state="offline", connected=False, muted=True, emotion="neutral")
+            return
+        if (kind == "tts" and previous == "speaking" and value.get("state") == "stop"
+                and value.get("session_id") in (None, self.session)):
+            finish = getattr(self.audio, "finish_reply", None)
+            if finish:
+                finish()
         super()._message(value)
+        if self.handsfree and kind == "hello" and previous == "connecting" and self.data["connected"] and self.wake_connecting:
+            self.wake_connecting = False
+            if self.wake_prompt:
+                self.audio.play_pcm(self.wake_prompt)
+                self.wake_prompt_pending = True
+            else:
+                self._start_wake_listening()
+        if (self.wake_barge_in and kind == "tts" and previous != "speaking"
+                and self.data["state"] == "speaking"):
+            self.barge_frames.clear()
+            self.barge_speech_frames = 0
+            self.handsfree.reset_speech()

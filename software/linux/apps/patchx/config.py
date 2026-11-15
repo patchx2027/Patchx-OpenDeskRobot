@@ -7,7 +7,7 @@ import re
 
 from apps.companion.config import validate
 
-DEFAULTS = {"client_ip": "", "backlight_enabled": False, "backlight_path": "",
+DEFAULTS = {"wake_prompt_wav": "", "wake_assets": "", "wake_aec_library": "", "wake_barge_in": False, "client_ip": "", "backlight_enabled": False, "backlight_path": "",
             "display_enabled": False, "display_device": "/dev/fb0", "motor_port": "",
             "audio_enabled": False, "volume_initial": 8,
             "audio_card_id": "rockchiprk809co", "audio_playback_route": "HP_NO_MIC",
@@ -27,13 +27,25 @@ def validate_product(values):
     # Original Android does not require peer pongs while processing speech.
     voice = validate({"websocket_heartbeat": False, **voice_values})
     product = dict(DEFAULTS, **settings)
-    for key in ("backlight_enabled", "display_enabled", "audio_enabled", "camera_enabled", "mqtt_enabled", "mqtt_tls"):
+    for key in ("backlight_enabled", "display_enabled", "audio_enabled", "camera_enabled", "mqtt_enabled", "mqtt_tls", "wake_barge_in"):
         if type(product[key]) is not bool:
             raise ValueError(key + " must be boolean")
     for key in ("client_ip", "backlight_path", "display_device", "camera_program", "camera_work_dir", "motor_port"):
         value = product[key]
         if not isinstance(value, str) or len(value) > 2048 or any(c in value for c in "\r\n\x00"):
             raise ValueError("invalid " + key)
+    for key in ("wake_assets", "wake_aec_library", "wake_prompt_wav"):
+        path = product[key]
+        if not isinstance(path, str) or (path and not os.path.isabs(path)) or any(c in path for c in "\r\n\x00"):
+            raise ValueError(key + " must be an absolute path")
+    if bool(product["wake_assets"]) != bool(product["wake_aec_library"]) or (
+            product["wake_assets"] and (not product["audio_enabled"] or voice["mode"] != "live"
+                                        or voice["listen_mode"] != "realtime")):
+        raise ValueError("hands-free voice requires live realtime board audio, model assets and AEC")
+    if product["wake_prompt_wav"] and not product["wake_assets"]:
+        raise ValueError("wake prompt requires hands-free voice")
+    if product["wake_barge_in"] and not product["wake_assets"]:
+        raise ValueError("voice interruption requires hands-free voice")
     if product["client_ip"]:
         try:
             ipaddress.ip_address(product["client_ip"])

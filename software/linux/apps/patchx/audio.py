@@ -9,6 +9,7 @@ import os
 import queue
 import re
 import select
+import struct
 import subprocess
 import sys
 import threading
@@ -173,7 +174,7 @@ class RK809SpeakerRoute:
 class PatchXAudioIO(AudioIO):
     """Reuse the bounded companion capture/Opus contract with board ownership."""
 
-    def __init__(self, config, on_error=None, *, speaker_route, volume=None):
+    def __init__(self, config, on_error=None, *, speaker_route, volume=None, wake_aec_library=""):
         if not callable(getattr(speaker_route, "acquire", None)) or not callable(getattr(speaker_route, "release", None)):
             raise ValueError("an explicit speaker ownership port is required")
         board_config = dict(config)
@@ -182,6 +183,10 @@ class PatchXAudioIO(AudioIO):
         for key, default in (("capture_device", CAPTURE_DEVICE), ("playback_device", PLAYBACK_DEVICE)):
             if board_config.get(key, "default") == "default":
                 board_config[key] = default
+        self.capture_array = bool(wake_aec_library)
+        if self.capture_array:
+            board_config.update(aec_enabled=True, aec_library=wake_aec_library,
+                                capture_device="patchx_capture_array")
         super().__init__(board_config, on_error)
         self.speaker_route = speaker_route
         self.volume = volume if volume is not None else SoftwareVolume()
@@ -189,6 +194,26 @@ class PatchXAudioIO(AudioIO):
             raise ValueError("expected the logical PCM volume port")
         self.cleanup_uncertain = False
         self._speaker_owned = False
+        self._reply_end = None
+
+    def _command(self, capture, sample_rate=None):
+        command = super()._command(capture, sample_rate)
+        if capture and self.capture_array:
+            command[command.index("-c") + 1] = "8"
+        return command
+
+    def _capture_frame_bytes(self):
+        return super()._capture_frame_bytes() * (8 if self.capture_array else 1)
+
+    def _capture_pcm(self, data):
+        if not self.capture_array:
+            return super()._capture_pcm(data)
+        microphone = bytearray()
+        reference = bytearray()
+        for row in struct.iter_unpack("<8h", data):
+            microphone.extend(struct.pack("<h", row[0]))
+            reference.extend(struct.pack("<h", (row[6] + row[7]) // 2))
+        return self._aec.process_synchronous(bytes(microphone), bytes(reference))
 
     def _ensure_started(self):
         if self.cleanup_uncertain or getattr(self.speaker_route, "cleanup_uncertain", False):
@@ -277,6 +302,12 @@ class PatchXAudioIO(AudioIO):
                         generation, packet = self._queue.get_nowait()
                     except queue.Empty:
                         packet = None
+                    end_reply = packet is None and self._reply_end == self._generation
+                    if end_reply:
+                        self._reply_end = None
+                        generation = self._generation
+                        process = self._playback
+                        self._inflight = process is not None
                     if (packet is None and self._stream_open and
                             time.monotonic() > max(self._stream_deadline, self._play_until + 15.0)):
                         raise AudioError("PCM stream end/chunk timed out")
@@ -309,6 +340,11 @@ class PatchXAudioIO(AudioIO):
                         process = self._playback
                         fd = process.stdin.fileno()
                 if packet is None:
+                    if end_reply and process is not None:
+                        self._drain_playback(process, generation)
+                        with self._lock:
+                            if generation == self._generation:
+                                self._inflight = False
                     self._stop.wait(0.01)
                     continue
                 offset = 0
@@ -333,33 +369,46 @@ class PatchXAudioIO(AudioIO):
                     if offset < len(pcm):
                         self._stop.wait(0.01)
                 if close_pcm:
-                    with self._lock:
-                        current = generation == self._generation and not self._stop.is_set()
-                        if current:
-                            process.stdin.close()
-                    drain_deadline = max(time.monotonic(), self._play_until) + 3
-                    while current and process.poll() is None:
-                        if time.monotonic() > drain_deadline:
-                            raise AudioError("Local PCM playback drain timed out")
-                        self._stop.wait(0.01)
-                        with self._lock:
-                            current = generation == self._generation and not self._stop.is_set()
-                    with self._lock:
-                        if current:
-                            if process.returncode != 0:
-                                raise AudioError("Local PCM playback failed")
-                            self._terminate(process)
-                            self._playback = None
-                            self._play_until = 0.0
-                            if stream_pcm:
-                                self._stream_open = self._stream_ending = self._stream_started = False
-                                self._stream_rate = self._stream_bytes = 0
-                                self._stream_deadline = 0.0
+                    self._drain_playback(process, generation, stream_pcm)
                 with self._lock:
                     if generation == self._generation:
                         self._inflight = False
         except Exception as error:
             self._fail(error)
+
+    def finish_reply(self):
+        with self._lock:
+            self._reply_end = self._generation
+
+    def playback_busy(self):
+        with self._lock:
+            return self._reply_end == self._generation or super().playback_busy()
+
+    def _drain_playback(self, process, generation, stream_pcm=False):
+        with self._lock:
+            if generation != self._generation or self._stop.is_set():
+                return
+            process.stdin.close()
+            deadline = max(time.monotonic(), self._play_until) + 3
+        while process.poll() is None:
+            if time.monotonic() > deadline:
+                raise AudioError("PCM playback drain timed out")
+            self._stop.wait(.01)
+            with self._lock:
+                if generation != self._generation or self._stop.is_set():
+                    return
+        with self._lock:
+            if generation != self._generation or self._stop.is_set():
+                return
+            if process.returncode != 0:
+                raise AudioError("PCM playback failed")
+            self._terminate(process)
+            self._playback = None
+            self._play_until = 0.0
+            if stream_pcm:
+                self._stream_open = self._stream_ending = self._stream_started = False
+                self._stream_rate = self._stream_bytes = 0
+                self._stream_deadline = 0.0
 
     def stop(self):
         self._stop.set()
@@ -377,6 +426,9 @@ class PatchXAudioIO(AudioIO):
                 self._release_speaker()
             except Exception as error:
                 errors.append(error)
+            if not errors and self._aec:
+                self._aec.close()
+                self._aec = None
             if not errors and self._codec:
                 self._codec.close()
                 self._codec = None

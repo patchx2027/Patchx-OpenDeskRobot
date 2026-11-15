@@ -166,25 +166,39 @@ class EchoCanceller:
             self.stats["capture_samples"] += count
             self.stats["mic_energy"] += audioop.rms(pcm, 2) ** 2 * count
             self.stats["reference_energy"] += audioop.rms(bytes(ref), 2) ** 2 * count
-            self.mic_pending.extend(pcm)
-            self.ref_pending.extend(ref)
-            try:
-                while len(self.mic_pending) >= BLOCK * 2:
-                    result = self.native.process(bytes(self.mic_pending[:BLOCK*2]), bytes(self.ref_pending[:BLOCK*2]))
-                    if not isinstance(result, bytes) or len(result) != BLOCK*2:
-                        raise RuntimeError("Invalid AEC output")
-                    del self.mic_pending[:BLOCK*2]
-                    del self.ref_pending[:BLOCK*2]
-                    self.output.extend(result)
-                    self.stats["processed_blocks"] += 1
-            except Exception:
-                self.close()
-                raise
-            result = bytes(self.output[:len(pcm)])
-            del self.output[:len(pcm)]
-            self.stats["output_energy"] += audioop.rms(result, 2) ** 2 * count
+            result = self._process_pairs(pcm, bytes(ref))
             self._discard_before(self.capture_next_sample / RATE)
             return result
+
+    def process_synchronous(self, mic, reference):
+        """Use a speaker reference captured on the same clock as the microphone."""
+        self._pcm(mic)
+        self._pcm(reference)
+        if len(mic) != len(reference) or len(mic) > RATE * 2 * MAX_FUTURE:
+            raise ValueError("Invalid paired capture frame")
+        with self.lock:
+            self._open()
+            return self._process_pairs(mic, reference)
+
+    def _process_pairs(self, mic, reference):
+        self.mic_pending.extend(mic)
+        self.ref_pending.extend(reference)
+        try:
+            while len(self.mic_pending) >= BLOCK * 2:
+                result = self.native.process(bytes(self.mic_pending[:BLOCK*2]), bytes(self.ref_pending[:BLOCK*2]))
+                if not isinstance(result, bytes) or len(result) != BLOCK*2:
+                    raise RuntimeError("Invalid AEC output")
+                del self.mic_pending[:BLOCK*2]
+                del self.ref_pending[:BLOCK*2]
+                self.output.extend(result)
+                self.stats["processed_blocks"] += 1
+        except Exception:
+            self.close()
+            raise
+        result = bytes(self.output[:len(mic)])
+        del self.output[:len(mic)]
+        self.stats["output_energy"] += audioop.rms(result, 2) ** 2 * (len(mic) // 2)
+        return result
 
     def snapshot(self):
         """Aggregate counters only; energies use integer RMS estimates."""

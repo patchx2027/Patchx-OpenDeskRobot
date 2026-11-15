@@ -85,7 +85,7 @@ PatchX 应用入口在 `software/linux/apps/patchx/`，通用语音、传输和�
 | Wi-Fi | BCMDHD 使用匹配的 firmware/NVRAM。提供 5 GHz 网络接入 | [设备树与固件说明](Documentation/patchx/SOURCE_GUIDE.md) |
 | 调试串口 | `ttyFIQ0` 用于读取启动日志、进入 U-Boot 和 Linux shell | [串口与联网](Documentation/patchx/ANDROID_START.md) · [RAM 启动](Documentation/patchx/RAM_BOOT.md) |
 
-在线流式对话配置见[在线语音说明](software/linux/docs/ONLINE_VOICE.md)。Linux 基础语音路径暂未实现原厂 Android 的 CAE、阵列 AEC 和离线唤醒。
+在线流式对话配置见[在线语音说明](software/linux/docs/ONLINE_VOICE.md)。Linux 支持配置本地唤醒和连续对话。
 
 ## 来源与许可
 
