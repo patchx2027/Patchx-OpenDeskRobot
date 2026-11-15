@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+pid=$(cat /tmp/patchx-app.pid)
+kill -0 "$pid"
+chroot /tmp/patchx-runtime/runtime /usr/bin/python3 -B -c '
+import json
+import urllib.request
+
+with open("/opt/patchx-ram-app/ram.json") as stream:
+    port = json.load(stream).get("voice", {}).get("port", 8090)
+base = f"http://127.0.0.1:{port}"
+with urllib.request.urlopen(base + "/", timeout=2) as reply:
+    assert reply.status == 200 and reply.read(1)
+with urllib.request.urlopen(base + "/api/status", timeout=2) as reply:
+    status = json.load(reply)
+    assert isinstance(status["patchx"], dict)
+print("PATCHX_RAM_APP_READY", status.get("state"), "muted=" + str(status.get("muted")))
+'

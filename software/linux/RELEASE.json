@@ -270,7 +270,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "64bd34ba6db45a9f8146a177c4c17b0023a1da9da4291a6855bc15cf97583e81"
+      "sha256": "a5d11830d81975874c4f1eb6c60cd5d7e752e0ce730d6deffb142ea13ccfb363"
     },
     {
       "path": "apps/companion/README.md",
@@ -467,6 +467,22 @@
     {
       "path": "deploy/patchx/live.example.json",
       "sha256": "32260fb4389ae688bac75ab8ee565df25820f6f422130830f9eb6b0484576d53"
+    },
+    {
+      "path": "deploy/patchx/ram/init",
+      "sha256": "5c6f27df1837917d8cfaa76b621e8b231969498641e806d64e96bd53105e5bea"
+    },
+    {
+      "path": "deploy/patchx/ram/patchx-ram-return",
+      "sha256": "90fee1914ae783ef8d391beecd89b7985012848a18c5f3afb1565cb35b53708f"
+    },
+    {
+      "path": "deploy/patchx/ram/patchx-ram-start",
+      "sha256": "5684048c311fecbad2fd0f2878f8a93d141d54801fbe594d77c2ef10cbfbb5ee"
+    },
+    {
+      "path": "deploy/patchx/ram/patchx-ram-status",
+      "sha256": "387c7916a795cf670d718da4dbd86113b715964988f3763c81fce8f830415f34"
     },
     {
       "path": "docs/CAMERA.md",

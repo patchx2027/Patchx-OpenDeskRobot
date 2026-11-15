@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+/bin/busybox --install -s /bin
+export PATH=/bin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs -o size=192m tmpfs /tmp
+echo PATCHX_RAM_READY
+uname -r
+if /bin/patchx-ram-start; then
+    echo PATCHX_RAM_APP_LAUNCHED
+else
+    echo PATCHX_RAM_APP_FAILED >&2
+fi
+while :; do
+    setsid cttyhack sh -i </dev/console >/dev/console 2>&1 || sleep 1
+done

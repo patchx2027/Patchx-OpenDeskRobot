@@ -67,7 +67,7 @@ chmod 755 "$INIT_ROOT/init"
   find . -print0 | cpio --null -o -H newc --owner 0:0 | gzip -n -9 > "$INITRAMFS")
 ```
 
-最小环境提供串口和驱动核对。运行 PatchX 应用时还需准备 Linux 根文件系统、应用依赖和外设固件，按实际部署方式由 `/init` 启动。应用配置见[用户程序说明](../../software/linux/README.md)。
+最小环境提供串口和驱动核对。运行 PatchX 应用时还需准备 Linux 根文件系统、应用依赖和外设固件，按实际部署方式由 `/init` 启动。应用配置见[用户程序说明](../../software/linux/README.md)。需要 Linux 启动后自动运行 PatchX 时，按[App 随 RAM 启动](RAM_APP.md)制作应用 initramfs。
 
 ## 3. 组装 40 MiB RAM 包
 

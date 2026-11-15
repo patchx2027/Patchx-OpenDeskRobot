@@ -16,6 +16,7 @@
 | 联调 GD32F503 电机板、查看状态或执行 OTA | [电机板接入](apps/patchx/README.md#gd32f503-电机控制) |
 | 阅读语音状态机、WebSocket 和 HTTP 服务 | [Companion 公共模块](apps/companion/README.md) |
 | 构建内核与设备树 | [内核构建说明](../../Documentation/patchx/BUILD.md) |
+| 让 PatchX 随旧板 RAM Linux 启动 | [应用部署与自启动](../../Documentation/patchx/RAM_APP.md) |
 
 安装依赖后，可先运行：
 

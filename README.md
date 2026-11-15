@@ -24,7 +24,7 @@ GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1]
 | --- | --- |
 | 运行演示，修改语音、表情或电机逻辑 | [PatchX 用户程序](software/linux/README.md) |
 | 修改驱动或设备树，构建 Image、模块和 DTB | [内核与设备树指南](Documentation/patchx/SOURCE_GUIDE.md) · [内核构建](Documentation/patchx/BUILD.md) |
-| 手头只有原厂 Android，想联网、了解烧录并启动 Linux | [原厂 Android 准备、联网与启动](Documentation/patchx/ANDROID_START.md) · [Linux RAM 启动步骤](Documentation/patchx/RAM_BOOT.md) |
+| 手头只有原厂 Android，想联网、了解烧录并启动 Linux | [原厂 Android 准备、联网与启动](Documentation/patchx/ANDROID_START.md) · [Linux RAM 启动步骤](Documentation/patchx/RAM_BOOT.md) · [PatchX App 随 RAM 启动](Documentation/patchx/RAM_APP.md) |
 
 仓库根目录的 [README](README) 随内核源码保留，面向内核开发者。当前的 [README.md](README.md) 是 PatchX 产品首页，从这里找应用、板级文档和启动流程。
 

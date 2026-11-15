@@ -1,0 +1,51 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+root=/tmp/patchx-runtime/runtime
+{
+    read -r archive
+    read -r digest
+} </etc/patchx-runtime
+
+cache=
+for uevent in /sys/class/block/*/uevent; do
+    if grep -qx PARTNAME=cache "$uevent"; then
+        test -z "$cache"
+        block=${uevent%/uevent}
+        cache=/dev/${block##*/}
+    fi
+done
+test -b "$cache"
+mkdir /tmp/patchx-runtime
+(
+    mount -t ext4 -o ro,noload "$cache" /mnt/cache
+    trap 'umount /mnt/cache' EXIT
+    archive="/mnt/cache/$archive"
+    test "$(sha256sum "$archive")" = "$digest  $archive"
+    gzip -dc "$archive" >/tmp/patchx-runtime/runtime.tar
+    tar -xf /tmp/patchx-runtime/runtime.tar -C /tmp/patchx-runtime
+    rm /tmp/patchx-runtime/runtime.tar
+    umount /mnt/cache
+    trap - EXIT
+)
+test ! -e "$root/opt/patchx-ram-app"
+cp -R /opt/patchx-ram-app "$root/opt/patchx-ram-app"
+mkdir -p "$root/dev" "$root/proc" "$root/sys" "$root/tmp"
+mounted=
+cleanup() {
+    for path in $mounted; do
+        umount "$root/$path"
+    done
+}
+trap cleanup EXIT
+for path in dev proc sys; do
+    mount --bind "/$path" "$root/$path"
+    mounted="$path $mounted"
+done
+insmod /snd-soc-rk817.ko
+ip link set lo up
+export PATH=/usr/sbin:/usr/bin:/bin PYTHONUNBUFFERED=1
+export ALSA_CONFIG_PATH=/opt/patchx-ram-app/deploy/patchx/alsa-rk3568.conf
+chroot "$root" /bin/sh -c 'cd /opt/patchx-ram-app && exec /usr/bin/python3 -B -m apps.patchx --config /opt/patchx-ram-app/ram.json' &
+printf '%s\n' "$!" >/tmp/patchx-app.pid
+trap - EXIT
