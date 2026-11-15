@@ -258,7 +258,7 @@
     "root filesystem and system images",
     "account credentials and device authorization files"
   ],
-  "online_voice_status": "On 2026-10-25, a host-side probe using the published transport, codec and hello validation completed three text turns and three synthetic-speech turns at ws://118.31.102.180:8360/, with correct answer text, decodable Opus and tts.stop. The complete application state machine and physical board capture/playback have not been accepted with this endpoint.",
+  "online_voice_status": "On 2026-10-25, a host-side probe using the published transport, codec and hello validation completed three text turns and three synthetic-speech turns at ws://118.31.102.180:8360/, with correct answer text, decodable Opus and tts.stop. On 2026-11-14, the old 3568A board running native Linux completed one live streaming ASR, LLM and TTS turn with the same endpoint; the correct reply was audible after a natural pause and no recording was saved. See docs/ONLINE_VOICE.md.",
   "published_files_sha256": [
     {
       "path": ".gitignore",
@@ -693,7 +693,7 @@
       "sha256": "5e3ce5f3b5738a4510825e52f12516f38035eb2010b2bee2b644208a0ff9b8b6"
     }
   ],
-  "updated_date": "2026-11-14",
+  "updated_date": "2026-11-15",
   "voice_endpoint_update": {
     "date": "2026-10-25",
     "configuration": "deploy/patchx/live.example.json",
