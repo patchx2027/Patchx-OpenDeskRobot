@@ -10,6 +10,8 @@ Android 应用源码在 [`android` 分支](https://github.com/patchx2027/Patchx-
 
 在线示例使用 `ws://118.31.102.180:8360/` 和 `realtime` 模式。应用身份、客户端标识和令牌由使用者在本地填写。配置步骤和实测范围见[在线语音说明](software/linux/docs/ONLINE_VOICE.md)。
 
+GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/main/protocol/v1)。
+
 ## 从哪里开始
 
 | 想做什么 | 入口 |
