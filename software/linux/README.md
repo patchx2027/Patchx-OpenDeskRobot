@@ -2,7 +2,7 @@
 
 这里提供 PatchX 的 Python 应用、浏览器界面和 RK3568 板级适配源码。Python 命令均从本目录 `software/linux` 执行；内核、设备树和内核构建说明在仓库根目录。
 
-3568A 测试板已在原生 Linux 上通过 `8360` 完成一次实麦流式 ASR → LLM → TTS。现场自然说完停顿后听清正确回复，测试未保存录音。 配置与实测范围见 [在线语音说明](docs/ONLINE_VOICE.md)。
+配置流式语音时，按[在线语音配置](docs/ONLINE_VOICE.md)填写自己的服务身份，并按[音频接入](deploy/patchx/AUDIO.md)配置麦克风和扬声器。
 
 ## 从哪里开始
 

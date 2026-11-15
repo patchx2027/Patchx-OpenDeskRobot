@@ -33,7 +33,7 @@ python3 -m apps.patchx --config apps/patchx/demo.json
 
 ## 配置在线服务
 
-先阅读 [在线语音状态](ONLINE_VOICE.md)。模板采用 2026 年 10 月 25 日已通过主机问答验证的 `8360` 服务配置；使用者仍需具备该服务的使用授权，并填写自己的有效身份和令牌。
+先阅读 [在线语音配置](ONLINE_VOICE.md)。模板提供 `8360` 服务的配置示例，请填写自己获授权的服务身份和令牌。
 
 将模板复制到仓库外：
 
@@ -64,7 +64,7 @@ install -m 600 deploy/patchx/live.example.json "$HOME/.config/patchx/live.json"
 
 首次接入使用页面的单次说话按钮。网页的“连续对话”会改用 `auto`，不属于本次成功的 `realtime` 配置；不要将主机探针的三轮结果理解为网页连续对话已通过。
 
-上传格式保持 16 kHz 单声道、每包 60 ms 的 Opus。服务在本次 hello 中声明 24 kHz 输出，由客户端按协商结果解码；不需要将麦克风采样率改为 24 kHz。
+上传格式保持 16 kHz 单声道、每包 60 ms 的 Opus。客户端按服务端 hello 协商的采样率解码回复。
 
 在 Bash 中输入本次运行的令牌，输入内容不会回显：
 

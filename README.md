@@ -10,11 +10,9 @@ RK3568 是瑞芯微的 64 位片上系统，采用四核 Arm Cortex-A55，集成
 
 [瑞芯微 RK3568 产品页](https://www.rock-chips.com/a/en/products/RK35_Series/2021/0113/1276.html) · [RK3568 芯片简版数据手册](https://www.rock-chips.com/uploads/pdf/2022.8.26/192/RK3568%20Brief%20Datasheet.pdf)
 
-## 在线语音状态
+## 在线语音
 
-3568A 测试板已在原生 Linux 上使用 `8360` 服务完成一次实麦流式对话。现场自然说完并停顿后听清了正确回复「12」。测试未保存录音。
-
-在线示例使用 `ws://118.31.102.180:8360/` 和 `realtime` 模式。应用身份、客户端标识和令牌由使用者在本地填写。配置步骤和实测范围见[在线语音说明](software/linux/docs/ONLINE_VOICE.md)。
+PatchX 支持流式语音对话。配置示例使用 `8360` 端口和 `realtime` 模式，服务地址、设备身份、客户端标识和令牌由使用者配置。连接方法见[在线语音配置](software/linux/docs/ONLINE_VOICE.md)。
 
 GD32 串口帧与流式语音的共同约定及测试样例见 [共享协议 v1](https://github.com/patchx2027/Patchx-OpenDeskRobot/tree/main/protocol/v1)。
 
@@ -50,7 +48,7 @@ python3 -m apps.patchx --config apps/patchx/demo.json
 | `block/` | 块设备 I/O 层 |
 | `certs/` | 内核证书和密钥管理 |
 | `crypto/` | 内核密码算法与接口 |
-| `Documentation/` | 内核文档。[`Documentation/patchx/`](Documentation/patchx/) 管理板级启动、构建和实测 |
+| `Documentation/` | 内核文档。[`Documentation/patchx/`](Documentation/patchx/) 管理板级启动和构建 |
 | `drivers/` | 内核设备驱动，包括 GPIO、显示、USB 和媒体 |
 | `fs/` | 文件系统和虚拟文件系统层 |
 | `include/` | 内核及用户空间接口头文件 |
@@ -79,15 +77,15 @@ PatchX 应用入口在 `software/linux/apps/patchx/`，通用语音、传输和�
 
 | 外设 | 在 Linux 上能做什么 | 接入说明 |
 | --- | --- | --- |
-| Bothlent USB 麦阵、H8 接线 | ALSA 可采集 16 kHz、8 通道 PCM。前 4 路实测有拾音响应，PatchX 基础语音选用逻辑通道 0 | [音频配置](software/linux/deploy/patchx/AUDIO.md) · [H8 接线与采集对照](Documentation/patchx/RK3568-AUDIO-VERIFICATION.md) |
-| RK809 与扬声器 | 3568A 测试板通过 `HP_NO_MIC` 播放。GPIO148 控制外部功放，播放结束后路由回到 `OFF` | [音频配置](software/linux/deploy/patchx/AUDIO.md) |
+| Bothlent USB 麦阵、H8 接线 | ALSA 可采集 16 kHz、8 通道 PCM，PatchX 基础语音选用逻辑通道 0 | [音频配置](software/linux/deploy/patchx/AUDIO.md) |
+| RK809 与扬声器 | PatchX 默认使用 `HP_NO_MIC` 播放。GPIO148 控制外部功放，释放播放设备时路由恢复 `OFF` | [音频配置](software/linux/deploy/patchx/AUDIO.md) |
 | 720×720 DSI 屏幕与背光 | VOP2/DSI0 输出画面。PatchX 可绘制二维表情，并通过配置的背光设备调节亮度 | [显示与背光配置](software/linux/apps/patchx/README.md) |
 | OV5695 摄像头 | 经 CSI-2 和 RKISP 采集，配套用户态工具可生成 JPEG。需要匹配的 RKAIQ 库和模组 IQ 参数 | [相机接入](software/linux/docs/CAMERA.md) |
-| GD32F503 电机板 | UART 可查询六轴状态、PD 参数和故障。应用提供动作和 OTA 入口，有动力动作和原生 Linux OTA 的整链路仍待验收 | [电机接入](software/linux/apps/patchx/README.md#gd32f503-电机控制) · [串口联调范围](software/linux/docs/MOTOR_NATIVE_LINUX.md) |
-| Wi-Fi | BCMDHD 使用匹配的 firmware/NVRAM。原生 Linux 已完成 5 GHz 入网、DHCP 和局域网双向传输 | [设备树与固件说明](Documentation/patchx/SOURCE_GUIDE.md) |
+| GD32F503 电机板 | UART 可查询六轴状态、PD 参数和故障。应用提供动作与 OTA 接口，启用前按板卡和固件要求配置 | [电机接入](software/linux/apps/patchx/README.md#gd32f503-电机控制) |
+| Wi-Fi | BCMDHD 使用匹配的 firmware/NVRAM。提供 5 GHz 网络接入 | [设备树与固件说明](Documentation/patchx/SOURCE_GUIDE.md) |
 | 调试串口 | `ttyFIQ0` 用于读取启动日志、进入 U-Boot 和 Linux shell | [串口与联网](Documentation/patchx/ANDROID_START.md) · [RAM 启动](Documentation/patchx/RAM_BOOT.md) |
 
-在线语音的流式对话范围和配置见[在线语音说明](software/linux/docs/ONLINE_VOICE.md)。Linux 基础语音路径暂未实现原厂 Android 的 CAE、阵列 AEC 和离线唤醒。
+在线流式对话配置见[在线语音说明](software/linux/docs/ONLINE_VOICE.md)。Linux 基础语音路径暂未实现原厂 Android 的 CAE、阵列 AEC 和离线唤醒。
 
 ## 来源与许可
 

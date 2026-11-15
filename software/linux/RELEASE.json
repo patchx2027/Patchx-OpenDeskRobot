@@ -270,11 +270,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "99cbb0dd35cdfffd20fc5cc8db3ad921ab7b416d4b7fa258b1455991fe8b36dd"
+      "sha256": "90bbc24bb5ac2609fe100c6f7260f29ae5690768709d83606cd6c0c088868414"
     },
     {
       "path": "apps/companion/README.md",
-      "sha256": "f72473bcf0641ec4fa31b9f2aba1e7fe44358fbd2dcb8d239468196f47a14140"
+      "sha256": "b9bfe4409dbf9131f424268bc06ff398b267112e1170bc6490a31e36b26e6b4e"
     },
     {
       "path": "apps/companion/__init__.py",
@@ -382,7 +382,7 @@
     },
     {
       "path": "apps/patchx/README.md",
-      "sha256": "7d168156a8707856ea0715e95cd02f6e26b00f248b90f2202f66148a53acf940"
+      "sha256": "636f02ce114acf2e7825fd38f2cdb3793c9d7e38a8beb1bb7c4065453e62d7ff"
     },
     {
       "path": "apps/patchx/__init__.py",
@@ -458,7 +458,7 @@
     },
     {
       "path": "deploy/patchx/AUDIO.md",
-      "sha256": "fe7f6f78283c98d9f32984acfb1e36ed42f6bafc770a58eddb6a357286869e90"
+      "sha256": "7c6c2c1b64c7b973a6609255b047eb1a850d8e43aef6f26086b67245d124f73b"
     },
     {
       "path": "deploy/patchx/alsa-rk3568.conf",
@@ -486,19 +486,15 @@
     },
     {
       "path": "docs/CAMERA.md",
-      "sha256": "e2a758df5ec5f05b75cfefbbe553fcf3a206c86bd38982421bf777ce2e9dee6b"
+      "sha256": "bcfaaa1cac114e841621a7fc4e8845699bf7b3edcfc5388e255c3f0585a62881"
     },
     {
       "path": "docs/GETTING_STARTED.md",
-      "sha256": "0a6c025c86abf0b5eedc8001e9de6ac83cc54bc8821151ceecbfae5433f4af02"
-    },
-    {
-      "path": "docs/MOTOR_NATIVE_LINUX.md",
-      "sha256": "c77e078a32bde54dd38e77491c8fed6fdebc2759cb0b4ba8650e577fb2df12ad"
+      "sha256": "6430463544f058d3f629730f02575c295ce1ccb2f0008899348356de159c92fe"
     },
     {
       "path": "docs/ONLINE_VOICE.md",
-      "sha256": "61ca0cc7fb7f2d568892f66d11878ae20bccbd4c1351617a9764bb562ce335f3"
+      "sha256": "9e89c0d99cdf421d7c985671bbb1471a020ee959af292b2d5209235397bea778"
     },
     {
       "path": "docs/TESTS.md",
@@ -792,8 +788,7 @@
         "code": 3
       },
       "app_http_status": 200,
-      "app_exit_code": 0,
-      "report": "docs/MOTOR_NATIVE_LINUX.md"
+      "app_exit_code": 0
     }
   }
 }

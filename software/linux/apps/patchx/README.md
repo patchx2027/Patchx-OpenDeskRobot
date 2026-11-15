@@ -2,7 +2,7 @@
 
 面向 RK3568 的产品入口，复用 Companion 的语音状态机、WebSocket 和浏览器服务，在同一非实时事件线程处理兼容 Android 1.0.1 的业务消息。
 
-首次使用请从 [安装与配置教程](../../docs/GETTING_STARTED.md) 开始。3568A 测试板已在原生 Linux 上通过 `8360` 完成一次实麦流式 ASR → LLM → TTS。现场自然说完停顿后听清正确回复，测试未保存录音。 配置与实测范围见 [在线语音说明](../../docs/ONLINE_VOICE.md)。
+首次使用请从 [安装与配置教程](../../docs/GETTING_STARTED.md) 开始。在线对话的服务参数见 [在线语音配置](../../docs/ONLINE_VOICE.md)。
 
 从 `software/linux` 运行：
 
@@ -40,10 +40,9 @@ python3 -m apps.patchx --config apps/patchx/demo.json
 
 ## GD32F503 电机控制
 
-本板的原生 Linux 串口已确认是 `/dev/ttyS0`。六轴查询及正式入口的实测结果见 [RK3568 原生 Linux 电机板联调](../../docs/MOTOR_NATIVE_LINUX.md)。
+在 3568A 产品设备树下，电机板接 UART0（`/dev/ttyS0`），调试串口走 `ttyFIQ0`。
 
-
-在 live 配置中把 `patchx.motor_port` 设为已核实的串口绝对路径，例如 `/dev/ttyS0`。11 月 12 日的实板 UART0 联调运行在 Android 11，设备节点为 `/dev/ttySMT0`。默认空值表示禁用。连接使用 115200 8N1，要求板端支持新版 `0x6B`（revision 1）。启动只同步序号水位、就绪、故障和轴状态。连接恢复后由调用方重新请求运动。
+在 live 配置中把 `patchx.motor_port` 设为已核实的串口绝对路径，例如 `/dev/ttyS0`。默认空值表示禁用。连接使用 115200 8N1，要求板端支持新版 `0x6B`（revision 1）。启动只同步序号水位、就绪、故障和轴状态。连接恢复后由调用方重新请求运动。
 
 本地控制代码在 runtime 启动后调用 `runtime.core.motor`。命令返回 Future，`result(timeout=...)` 得到带 `result` 和 `status` 的板端应答，`result=0` 表示板端接受。
 
@@ -68,8 +67,6 @@ python3 -m apps.patchx.motor_ota --port /dev/ttyS0 /path/to/PatchX_edu.bin
 ```
 
 工具检查 APP 向量表、独占串口并等待板端接受停止指令，随后逐包上传。输出分别记录传输回执和重启应答，镜像安装仍需独立回读确认。末包回执丢失时，工具保留该结果并继续确认应用是否重启。
-
-2026 年 11 月 12 日，在电机动力断开的条件下，RK3568 与 GD32F503 完成了六轴状态和 PD 参数读取、停止确认、故障上报及清除。上位机 OTA 使用 Android 11 上的临时 ARM64 Linux 用户空间，配合已修复末包回执的电机板固件，收到 165/165 个回执，末包应答用时 1.513 秒。重启后应用恢复应答，J-Link 回读确认镜像及升级状态。带动力运动、位置反馈和断联后的机械表现仍待验收。
 
 ## 硬件配置
 

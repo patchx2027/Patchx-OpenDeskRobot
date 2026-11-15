@@ -86,7 +86,7 @@ enable-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
 
 设备树中的 `reset-gpios` 有效电平与当前 Linux 5.10 `ov5695.c` 的上下电逻辑配合；产品入口采用实测的 flags=1。保留 SDK 原传感器驱动及时序。端点的显式 phandle 及注释对应最后实测的 pre-overlay 设备树，便于逐属性核对。
 
-先读 `ov5695.c` 的 probe、供电与 stream 控制，再读 [phy-rockchip-csi2-dphy.c](../../drivers/phy/rockchip/phy-rockchip-csi2-dphy.c) 和 RKISP 的 media graph、格式协商、缓冲队列与停止路径。内核提供采集通路；有限 JPEG 实测还使用配套用户态 ISP、调参和编码流程，具体条件见 [相机接入](../../software/linux/docs/CAMERA.md)。
+先读 `ov5695.c` 的 probe、供电与 stream 控制，再读 [phy-rockchip-csi2-dphy.c](../../drivers/phy/rockchip/phy-rockchip-csi2-dphy.c) 和 RKISP 的 media graph、格式协商、缓冲队列与停止路径。内核提供采集通路；有限 JPEG 实测还使用配套用户态 ISP、调参和编码流程，配置见 [相机接入](../../software/linux/docs/CAMERA.md)。
 
 ## 电源与引脚参数
 
@@ -104,7 +104,7 @@ enable-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>;
 
 ## 阅读 Wi-Fi 与随机数驱动
 
-Wi-Fi 从 BCMDHD 目录开始，结合设备树中的 SDIO、供电和唤醒连接阅读。实测网络配置是 `PM=0` 与 `band=a`，使用匹配的 firmware/NVRAM，将这两项写入 `/lib/firmware/config.txt`。实测完成 5 GHz 入网及 64 KiB TCP 往返。
+Wi-Fi 从 BCMDHD 目录开始，结合设备树中的 SDIO、供电和唤醒连接阅读。实测网络配置是 `PM=0` 与 `band=a`，使用匹配的 firmware/NVRAM，将这两项写入 `/lib/firmware/config.txt`。
 
 随机数驱动从 `rockchip-rng.c` 开始，查看设备匹配、硬件初始化和读取接口。实测确认驱动绑定、CRNG 就绪和非阻塞 `getrandom` 成功。
 

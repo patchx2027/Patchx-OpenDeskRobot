@@ -2,7 +2,7 @@
 
 Companion 提供 Python 语音状态机、WebSocket 传输、PCM/Opus 和本地 HTTP 界面。PatchX 在此基础上装配 RK3568 音频、屏幕及业务接口。
 
-本发布面向 PatchX 的运行入口是 `python3 -m apps.patchx`。安装、演示和板端配置见 [开始使用](../../docs/GETTING_STARTED.md)；在线语音的实际结果见 [在线语音状态](../../docs/ONLINE_VOICE.md)。
+本发布面向 PatchX 的运行入口是 `python3 -m apps.patchx`。安装、演示和板端配置见 [开始使用](../../docs/GETTING_STARTED.md)；在线语音参数见 [在线语音配置](../../docs/ONLINE_VOICE.md)。
 
 ## 读源码
 

@@ -42,7 +42,7 @@ tools/patchx/build-rk3568-ram-boot.py \
     --output "$BUILD_ROOT/patchx-app-ram.img"
 ```
 
-initramfs 包含当前检出的 `apps/patchx`、`apps/companion`、配置和自启动脚本。ARM64 运行环境仍是独立的缓存文件。自启动脚本以 `ro,noload` 挂载 `cache` 分区，核对归档 SHA-256 并解包到 RAM，然后卸载缓存。应用在 RAM 中使用该用户空间运行。
+initramfs 包含当前检出的 `apps/patchx`、`apps/companion`、配置和自启动脚本。ARM64 运行环境仍是独立的缓存文件。自启动脚本以 `ro,noload` 挂载 `cache` 分区，核对归档 SHA-256 并解包到 RAM，然后卸载缓存。应用在 RAM 中使用该用户空间运行。启用在线服务前，请在 Linux 中配置板卡网络和匹配的 Wi‑Fi 固件。
 
 ## 3. 在 Android 暂存，再用 U-Boot 启动
 
@@ -72,7 +72,3 @@ patchx-ram-return
 ```
 
 脚本给 PatchX 发 TERM，等待 Python 进程退出，卸载应用用户空间的挂载，确认板载块设备文件系统均已卸载，再重启。进入原厂 Android 后可清理本轮暂存文件。
-
-## 3568A 测试板实测范围
-
-3568A 测试板从原厂 Android 暂存后启动 40 MiB RAM 包，CRC32 为 `1ae3e12c`。PatchX 未经手动执行即监听在 `127.0.0.1:8090`，首页与状态接口可用，并通过 HTTP 完成一次演示对话。结束时用 `patchx-ram-return` 返回原厂 Android。`boot`、`dtbo` 和 `uboot` 分区的 SHA-256 前后一致。这次验收使用演示配置，云端语音及各外设的使用条件见[用户程序说明](../../software/linux/README.md)。

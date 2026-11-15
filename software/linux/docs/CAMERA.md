@@ -117,7 +117,3 @@ exec /absolute/python3 -B -m apps.patchx.isp_capture \
 `tools/launcher/launch-product.c` 保留固定前缀 `/dev/rtctrl-patchx-app-v1/runtime`、原 kernel release、随包 Python 和 `/opt/patchx/live.json` 路径。它不是任意安装目录下的通用 launcher。
 
 该入口仅透传四个凭据环境键，其中语音键是 `RTCTRL_VOICE_TOKEN`；其 live 配置的 `voice.token_env` 必须使用同一个名称。通用 Python 启动教程可选择其它环境变量名（例如 `PATCHX_VOICE_TOKEN`），但不能未经适配就套用到这个固定 RAM 启动器。MQTT 的三个键为 `PATCHX_MQTT_USERNAME`、`PATCHX_MQTT_PASSWORD`、`PATCHX_MQTT_CLIENT_ID`。
-
-## 已有验证范围
-
-已有有限板端记录覆盖 SDK 生命周期、两次应用拍摄、640×480 JPEG 和本地真实 WebSocket 回传。画面未见之前的整体绿偏，但亮区截断、色边以及与 Android 的 3A/长期画质等效尚未验收。3568A 测试板原生 Linux 已完成一次实麦流式问答，配置与实测范围见 [在线语音说明](ONLINE_VOICE.md)。

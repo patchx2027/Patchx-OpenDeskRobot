@@ -57,11 +57,8 @@ export ALSA_CONFIG_PATH="$PWD/deploy/patchx/alsa-rk3568.conf"
 
 停止会分别尝试结束采集、打断播放并等待工作线程。无法确认子进程或设备已释放时，应用保留资源所有权并拒绝新一轮连接。用户态超时不构成内核阻塞调用的硬期限。
 
-## 已验证范围
+## 板卡接线与驱动
 
-2026 年 11 月 14 日，对照板 A 在原厂 Android 上使用 RK809 的 `HP_NO_MIC` 路由，左右声道分别播放普通话均听清。对照板 B 在同一路由下双声道播放清楚，Bothlent 前四路也有明显的讲话响应。两套系统的播放与采集结果见 [音频实机验证](../../../../Documentation/patchx/RK3568-AUDIO-VERIFICATION.md)。
+使用 H8 麦克风线束时先核对插接方向。ALSA 的 8 通道采集格式描述 USB 接口，PatchX 的基础语音路径取逻辑通道 0。
 
-有限板端记录确认 USB 8 通道接口的前四个逻辑通道有语音响应，应用选择其中通道 0；RK809 扬声器播放和有限 PCM 生命周期流程也已有验证。通道选择不代表波束形成或八个物理麦克风身份已确认。
-
-3568A 测试板已在原生 Linux 上通过 `8360` 完成一次实麦流式 ASR → LLM → TTS。现场自然说完停顿后听清正确回复，测试未保存录音。 配置与实测范围见 [在线语音说明](../../docs/ONLINE_VOICE.md)。采集和播放结果见 [音频实测记录](../../../../Documentation/patchx/RK3568-AUDIO-VERIFICATION.md)。
-3568A 应配套使用本分支的 DTB 和 RK817 模块。设备树的 `rockchip,hp-no-mic-uses-spk-ctl` 属性声明了 HP_NO_MIC 期间的外部功放接法。声卡或路由变化时，调整 `patchx.audio_card_id`、`patchx.audio_playback_route` 及对应 ALSA 映射。Linux RAM 启动复测覆盖了 PatchX 本地播放、路由选择和功放关闭，见 [实机音频记录](../../../../Documentation/patchx/RK3568-AUDIO-VERIFICATION.md)。
+3568A 使用本分支配套的 DTB 和 RK817 模块。设备树中的 `rockchip,hp-no-mic-uses-spk-ctl` 描述了 `HP_NO_MIC` 路由下的外部功放接法。更换声卡或路由时，同步调整 `patchx.audio_card_id`、`patchx.audio_playback_route` 和对应 ALSA 映射。
