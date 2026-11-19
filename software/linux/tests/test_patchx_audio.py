@@ -147,6 +147,266 @@ class AudioLeafTests(unittest.TestCase):
         self.assertEqual(self.route.events, ["SPK", "OFF"])
         self.assertTrue(self.route.after_exit)
 
+    def test_cloud_reply_timing_is_numeric_and_drain_keeps_route_contract(self):
+        acquire, release = self.route.acquire, self.route.release
+        def slow_acquire():
+            time.sleep(.02)
+            return acquire()
+        def slow_release():
+            time.sleep(.02)
+            return release()
+        self.route.acquire = slow_acquire
+        self.route.release = slow_release
+        codec = common.OpusCodec()
+        packet = codec.encode(bytes(1920))
+        codec.close()
+        self.adapter.play(packet)
+        eventually(lambda: self.adapter.first_write_monotonic > 0)
+        eventually(lambda: self.adapter.snapshot()["playback_timing"]["max_queue_empty_ms"] > 0)
+        time.sleep(.03)
+        self.adapter.play(packet)
+        eventually(lambda: self.adapter._queue.empty() and not self.adapter._inflight)
+        self.adapter.finish_reply()
+        eventually(lambda: not self.adapter.playback_busy())
+        timing = self.adapter.snapshot()["playback_timing"]
+        self.assertEqual(timing["packets"], 2)
+        self.assertGreaterEqual(timing["max_packet_gap_ms"], 30)
+        self.assertGreater(timing["max_queue_empty_ms"], 0)
+        self.assertGreaterEqual(timing["first_packet_to_write_ms"], 20)
+        self.assertGreaterEqual(timing["max_route_acquire_ms"], 20)
+        self.assertGreaterEqual(timing["max_route_release_ms"], 20)
+        self.assertTrue(all(type(value) in (int, float) for value in timing.values()))
+        self.assertEqual(self.route.events, ["SPK", "OFF"])
+        self.assertTrue(self.route.after_exit)
+
+    def test_packet_gap_does_not_include_time_between_replies_or_interrupts(self):
+        with mock.patch.object(common.AudioIO, "play"), mock.patch(
+                "apps.patchx.audio.time.monotonic", side_effect=[1., 1.1, 2., 10.]):
+            self.adapter.play(b"one")
+            self.adapter.play(b"two")
+            self.adapter.finish_reply()
+            self.adapter.play(b"new-reply")
+        self.assertAlmostEqual(self.adapter.snapshot()["playback_timing"]["max_packet_gap_ms"], 100)
+        self.adapter.interrupt()
+        self.assertIsNone(self.adapter._packet_at)
+        self.assertIsNone(self.adapter._first_packet_at)
+        self.assertIsNone(self.adapter._queue_empty_at)
+
+    def test_slow_route_does_not_block_packet_enqueue_or_capture_forward(self):
+        entered, unblock = threading.Event(), threading.Event()
+        clean_entered, clean_continue, forwarded = (threading.Event() for _ in range(3))
+        queued = threading.Event()
+        acquire = self.route.acquire
+        def slow_acquire():
+            entered.set()
+            if not unblock.wait(3):
+                raise RuntimeError("test route timed out")
+            return acquire()
+        def capture_pcm(data):
+            clean_entered.set()
+            clean_continue.wait(3)
+            return data
+        self.route.acquire = slow_acquire
+        self.adapter._capture_pcm = capture_pcm
+        self.adapter.capture_input.write_bytes(bytes(1920))
+        with mock.patch.object(common.shutil, "which", return_value="fixture"):
+            self.adapter.start(lambda _: forwarded.set())
+        self.assertTrue(clean_entered.wait(2))
+        codec = common.OpusCodec()
+        packet = codec.encode(bytes(1920))
+        codec.close()
+        self.adapter.play(packet)
+        self.assertTrue(entered.wait(2))
+        worker = threading.Thread(target=lambda: (self.adapter.play(packet), queued.set()))
+        worker.start()
+        try:
+            clean_continue.set()
+            enqueued_without_route = queued.wait(.3)
+            forwarded_without_route = forwarded.wait(.3)
+        finally:
+            unblock.set()
+            clean_continue.set()
+            worker.join(2)
+        self.assertTrue(enqueued_without_route, "route acquire blocked packet enqueue")
+        self.assertTrue(forwarded_without_route, "route acquire blocked capture forwarding")
+
+    def test_slow_route_release_does_not_block_packet_enqueue(self):
+        entered, unblock, queued = (threading.Event() for _ in range(3))
+        release = self.route.release
+        def slow_release():
+            entered.set()
+            if not unblock.wait(3):
+                raise RuntimeError("test route timed out")
+            return release()
+        self.route.release = slow_release
+        codec = common.OpusCodec()
+        packet = codec.encode(bytes(1920))
+        codec.close()
+        self.adapter.play(packet)
+        eventually(lambda: self.adapter.first_write_monotonic > 0)
+        self.adapter.finish_reply()
+        self.assertTrue(entered.wait(2))
+        worker = threading.Thread(target=lambda: (self.adapter.play(packet), queued.set()))
+        worker.start()
+        try:
+            enqueued_without_route = queued.wait(.3)
+        finally:
+            unblock.set()
+            worker.join(2)
+        self.assertTrue(enqueued_without_route, "route release blocked packet enqueue")
+
+    def test_output_reconfiguration_releases_old_idle_pcm_without_holding_packet_lock(self):
+        entered, unblock, queued = (threading.Event() for _ in range(3))
+        release = self.route.release
+        def slow_release():
+            entered.set()
+            unblock.wait(3)
+            return release()
+        self.route.release = slow_release
+        codec = common.OpusCodec()
+        packet = codec.encode(bytes(1920))
+        codec.close()
+        self.adapter.play(packet)
+        eventually(lambda: self.adapter.first_write_monotonic > 0 and not self.adapter.playback_busy())
+        worker = threading.Thread(target=lambda: self.adapter.configure_output(48000))
+        worker.start()
+        self.assertTrue(entered.wait(2))
+        sender = threading.Thread(target=lambda: (self.adapter.play(packet), queued.set()))
+        sender.start()
+        try:
+            enqueued_without_route = queued.wait(.3)
+        finally:
+            unblock.set()
+            worker.join(2)
+            sender.join(2)
+        self.assertTrue(enqueued_without_route, "output reconfiguration held packet lock")
+        self.adapter.finish_reply()
+        eventually(lambda: not self.adapter.playback_busy())
+
+    def test_interrupt_during_acquire_cancels_before_pcm_spawn_and_allows_next_reply(self):
+        self._cancel_during_acquire(close=False)
+
+    def test_close_during_acquire_cancels_before_pcm_spawn_and_releases_route(self):
+        self._cancel_during_acquire(close=True)
+
+    def test_capture_failure_during_acquire_cancels_before_pcm_spawn(self):
+        self._cancel_during_acquire(close=False, failure=True)
+
+    def _cancel_during_acquire(self, close, failure=False):
+        entered, unblock = threading.Event(), threading.Event()
+        acquire = self.route.acquire
+        errors = []
+        def slow_acquire():
+            entered.set()
+            if not unblock.wait(3):
+                raise RuntimeError("test route timed out")
+            return acquire()
+        self.route.acquire = slow_acquire
+        codec = common.OpusCodec()
+        packet = codec.encode(bytes(1920))
+        codec.close()
+        self.adapter.play(packet)
+        self.assertTrue(entered.wait(2))
+        generation = self.adapter._generation
+        def cancel():
+            try:
+                if failure:
+                    self.adapter._fail(RuntimeError("synthetic capture failure"))
+                elif close:
+                    self.adapter.stop()
+                else:
+                    self.adapter.interrupt()
+            except Exception as error:
+                errors.append(error)
+        worker = threading.Thread(target=cancel)
+        worker.start()
+        try:
+            eventually(lambda: self.adapter._generation != generation)
+            with mock.patch("apps.patchx.audio.subprocess.Popen") as spawn:
+                unblock.set()
+                worker.join(2)
+                self.assertFalse(worker.is_alive())
+                spawn.assert_not_called()
+        finally:
+            unblock.set()
+            worker.join(2)
+        self.assertEqual(errors, [])
+        self.assertEqual(self.route.events, ["SPK", "OFF"])
+        self.assertFalse(self.adapter._speaker_owned)
+        self.assertIsNone(self.adapter._playback)
+        if not close and not failure:
+            self.route.acquire = acquire
+            self.adapter.play(packet)
+            self.adapter.finish_reply()
+            eventually(lambda: not self.adapter.playback_busy())
+            self.assertEqual(self.route.events, ["SPK", "OFF", "SPK", "OFF"])
+
+    def test_stop_reaps_playback_before_waiting_for_capture_thread(self):
+        capture_exit, capture_joining = threading.Event(), threading.Event()
+        capture = threading.Thread(target=lambda: capture_exit.wait(3))
+        capture.start()
+        self.adapter._capture_thread = capture
+        join = self.adapter._join
+        def observed_join(thread):
+            if thread is capture:
+                capture_joining.set()
+            join(thread)
+        self.adapter._join = observed_join
+        codec = common.OpusCodec()
+        packet = codec.encode(bytes(1920))
+        codec.close()
+        self.adapter.play(packet)
+        eventually(lambda: self.adapter.first_write_monotonic > 0)
+        process = self.adapter._playback
+        errors = []
+        def stop():
+            try:
+                self.adapter.stop()
+            except Exception as error:
+                errors.append(error)
+        worker = threading.Thread(target=stop)
+        worker.start()
+        try:
+            self.assertTrue(capture_joining.wait(2))
+            playback_stopped_before_capture_exit = process.poll() is not None
+            route_off_before_capture_exit = self.route.events == ["SPK", "OFF"]
+        finally:
+            capture_exit.set()
+            worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(playback_stopped_before_capture_exit, "capture join delayed playback stop")
+        self.assertTrue(route_off_before_capture_exit)
+
+    def test_stop_while_writer_waits_for_lifecycle_lock_prevents_further_pcm_write(self):
+        waiting, proceed = threading.Event(), threading.Event()
+        original_lock = self.adapter._playback_lock
+        adapter = self.adapter
+        class PausedWriteLock:
+            def __enter__(self):
+                if (threading.current_thread().name == "companion-playback"
+                        and adapter._playback is not None and not adapter.first_write_monotonic):
+                    waiting.set()
+                    if not proceed.wait(3):
+                        raise RuntimeError("writer gate timed out")
+                return original_lock.__enter__()
+            def __exit__(self, *args):
+                return original_lock.__exit__(*args)
+        self.adapter._playback_lock = PausedWriteLock()
+        codec = common.OpusCodec()
+        packet = codec.encode(bytes(1920))
+        codec.close()
+        with mock.patch("apps.patchx.audio.os.write", wraps=os.write) as write:
+            self.adapter.play(packet)
+            try:
+                self.assertTrue(waiting.wait(2))
+                self.adapter._stop.set()
+            finally:
+                proceed.set()
+            self.adapter._output_thread.join(2)
+            self.assertFalse(self.adapter._output_thread.is_alive())
+            write.assert_not_called()
+
     def test_interrupt_reaps_actual_child_before_restoring_route(self):
         codec = common.OpusCodec()
         packet = codec.encode(bytes(1920))

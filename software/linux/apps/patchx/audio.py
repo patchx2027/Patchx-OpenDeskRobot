@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 
-from apps.companion.audio import AudioError, AudioIO, PcmAudio, PcmStreamChunk
+from apps.companion.audio import AudioError, AudioIO, OpusCodec, OUTPUT_SAMPLE_RATES, PcmAudio, PcmStreamChunk
 from .protocol import android_int, legacy_target
 
 CAPTURE_DEVICE = "patchx_capture"
@@ -194,7 +194,89 @@ class PatchXAudioIO(AudioIO):
             raise ValueError("expected the logical PCM volume port")
         self.cleanup_uncertain = False
         self._speaker_owned = False
+        # Lifecycle operations serialize here; never wait for this lock while
+        # holding the shared packet/capture lock.
+        self._playback_lock = threading.RLock()
+        self._interrupting = 0
         self._reply_end = None
+        self._packet_at = None
+        self._first_packet_at = None
+        self._queue_empty_at = None
+        # Instance-lifetime numeric maxima; queue starvation is not an ALSA XRUN count.
+        self._timing = dict(packets=0, max_packet_gap_ms=0.0,
+                            max_queue_empty_ms=0.0, first_packet_to_write_ms=0.0,
+                            max_first_packet_to_write_ms=0.0,
+                            max_route_acquire_ms=0.0, max_route_release_ms=0.0)
+
+    def _timing_max(self, name, seconds):
+        self._timing[name] = max(self._timing[name], seconds * 1000.0)
+
+    def _end_queue_empty(self, now):
+        if self._queue_empty_at is not None:
+            self._timing_max("max_queue_empty_ms", now - self._queue_empty_at)
+            self._queue_empty_at = None
+
+    def play(self, packet):
+        # Accepted-packet gaps include dispatch/lock delays, not just network jitter.
+        with self._lock:
+            super().play(packet)
+            now = time.monotonic()
+            if self._packet_at is not None:
+                self._timing_max("max_packet_gap_ms", now - self._packet_at)
+            if self._packet_at is None:
+                self._first_packet_at = now
+            self._packet_at = now
+            self._timing["packets"] += 1
+
+    def interrupt(self):
+        with self._lock:
+            self._interrupting += 1
+            self._end_queue_empty(time.monotonic())
+            self._packet_at = self._first_packet_at = None
+            self._generation += 1
+            self._reply_end = None
+            self._stream_open = self._stream_ending = self._stream_started = False
+            self._stream_rate = self._stream_bytes = 0
+            self._stream_deadline = self.first_write_monotonic = self._play_until = 0.0
+            self._inflight = False
+            while not self._queue.empty():
+                self._queue.get_nowait()
+        try:
+            with self._playback_lock:
+                self._terminate(self._playback)
+                self._playback = None
+                with self._lock:
+                    if self._aec:
+                        self._aec.reset_reference()
+                    if self._codec:
+                        self._codec.reset_decoder()
+        finally:
+            with self._lock:
+                self._interrupting -= 1
+
+    def configure_output(self, sample_rate):
+        if type(sample_rate) is not int or sample_rate not in OUTPUT_SAMPLE_RATES:
+            raise AudioError("output_sample_rate must be 16000, 24000 or 48000")
+        with self._playback_lock:
+            with self._lock:
+                if sample_rate == self.output_sample_rate:
+                    return
+                if self.playback_busy():
+                    raise AudioError("Interrupt playback before changing its sample rate")
+                replacement = OpusCodec(decoder_sample_rate=sample_rate) if self._codec else None
+            try:
+                self._terminate(self._playback)
+                self._playback = None
+            except Exception:
+                if replacement:
+                    replacement.close()
+                raise
+            with self._lock:
+                if self._codec:
+                    self._codec.close()
+                self._codec = replacement
+                self.output_sample_rate = sample_rate
+                self.config["output_sample_rate"] = sample_rate
 
     def _command(self, capture, sample_rate=None):
         command = super()._command(capture, sample_rate)
@@ -230,8 +312,12 @@ class PatchXAudioIO(AudioIO):
             raise AudioError("cannot restore speaker while PCM ownership remains")
         self._speaker_owned = False
         try:
-            if self.speaker_route.release() is not True:
-                raise AudioError("speaker route restoration did not verify")
+            started = time.monotonic()
+            try:
+                if self.speaker_route.release() is not True:
+                    raise AudioError("speaker route restoration did not verify")
+            finally:
+                self._timing_max("max_route_release_ms", time.monotonic() - started)
         except Exception as error:
             self.cleanup_uncertain = True
             self.last_error = str(error)
@@ -247,14 +333,30 @@ class PatchXAudioIO(AudioIO):
         if playback:
             self._release_speaker()
 
-    def _open_playback(self, rate):
+    def _open_playback(self, rate, generation):
         self._speaker_owned = True
         try:
-            if self.speaker_route.acquire() is not True:
-                raise AudioError("speaker route ownership was refused")
+            started = time.monotonic()
+            try:
+                if self.speaker_route.acquire() is not True:
+                    raise AudioError("speaker route ownership was refused")
+            finally:
+                self._timing_max("max_route_acquire_ms", time.monotonic() - started)
+            with self._lock:
+                cancelled = generation != self._generation or self._stop.is_set() or self._interrupting
+            if cancelled:
+                self._release_speaker()
+                return False
             self._playback = subprocess.Popen(self._command(False, rate), stdin=subprocess.PIPE,
                                               stdout=subprocess.DEVNULL, bufsize=0)
             os.set_blocking(self._playback.stdin.fileno(), False)
+            with self._lock:
+                cancelled = generation != self._generation or self._stop.is_set() or self._interrupting
+            if cancelled:
+                self._terminate(self._playback)
+                self._playback = None
+                return False
+            return True
         except Exception:
             if self._playback is not None:
                 self._terminate(self._playback)
@@ -270,23 +372,24 @@ class PatchXAudioIO(AudioIO):
         self._stop.set()
         self._capture_stop.set()
         with self._lock:
+            self._end_queue_empty(time.monotonic())
+            self._packet_at = self._first_packet_at = None
+            self._generation += 1
+            self._reply_end = None
             self._stream_open = self._stream_ending = self._stream_started = False
             self._stream_rate = self._stream_bytes = 0
             self._stream_deadline = self._play_until = 0.0
             self._inflight = False
             while not self._queue.empty():
                 self._queue.get_nowait()
-            for process in (self._capture, self._playback):
-                try:
-                    self._terminate(process)
-                except Exception:
-                    self.cleanup_uncertain = True
+        with self._playback_lock:
             for name in ("_capture", "_playback"):
                 process = getattr(self, name)
-                if process is not None and process.poll() is not None:
-                    streams = (process.stdin, process.stdout)
-                    if all(stream is None or stream.closed for stream in streams):
-                        setattr(self, name, None)
+                try:
+                    self._terminate(process)
+                    setattr(self, name, None)
+                except Exception:
+                    self.cleanup_uncertain = True
             try:
                 self._release_speaker()
             except Exception:
@@ -295,81 +398,101 @@ class PatchXAudioIO(AudioIO):
             self.on_error(self.last_error)
 
     def _output(self):
-        # Board-specific copy of the existing bounded PCM worker: ownership and
-        # attenuation are placed at the real child/decoded-PCM boundaries.
         try:
             while not self._stop.is_set():
-                with self._lock:
-                    try:
-                        generation, packet = self._queue.get_nowait()
-                    except queue.Empty:
-                        packet = None
-                    end_reply = packet is None and self._reply_end == self._generation
-                    if end_reply:
-                        self._reply_end = None
-                        generation = self._generation
-                        process = self._playback
-                        self._inflight = process is not None
-                    if (packet is None and self._stream_open and
-                            time.monotonic() > max(self._stream_deadline, self._play_until + 15.0)):
-                        raise AudioError("PCM stream end/chunk timed out")
-                    if self._playback is not None and self._playback.poll() is not None:
-                        raise AudioError("aplay exited unexpectedly")
-                    if packet is not None:
-                        if generation != self._generation or self._stop.is_set():
-                            continue
-                        self._inflight = True
-                        stream_pcm = isinstance(packet, PcmStreamChunk)
-                        local_pcm = isinstance(packet, PcmAudio)
-                        close_pcm = local_pcm or (stream_pcm and packet.end)
-                        if stream_pcm:
-                            packet.validate()
-                            pcm, rate = packet.data, packet.sample_rate
-                            if not self._stream_started:
-                                self._terminate(self._playback)
-                                self._playback = None
-                                self._stream_started = True
-                        elif local_pcm:
-                            packet.validate()
-                            pcm, rate = packet.data, packet.sample_rate
+                packet = None
+                end_reply = False
+                process = None
+                with self._playback_lock:
+                    with self._lock:
+                        if self._interrupting:
+                            paused = True
+                        else:
+                            paused = False
+                            try:
+                                generation, packet = self._queue.get_nowait()
+                            except queue.Empty:
+                                packet = None
+                            now = time.monotonic()
+                            if packet is not None:
+                                self._end_queue_empty(now)
+                            elif self._playback is not None and self._packet_at is not None:
+                                if self._queue_empty_at is None:
+                                    self._queue_empty_at = now
+                            end_reply = packet is None and self._reply_end == self._generation
+                            if end_reply:
+                                self._reply_end = None
+                                generation = self._generation
+                                process = self._playback
+                                self._inflight = process is not None
+                            if (packet is None and self._stream_open and
+                                    now > max(self._stream_deadline, self._play_until + 15.0)):
+                                raise AudioError("PCM stream end/chunk timed out")
+                            if self._playback is not None and self._playback.poll() is not None:
+                                raise AudioError("aplay exited unexpectedly")
+                            if packet is not None:
+                                if generation != self._generation or self._stop.is_set():
+                                    continue
+                                self._inflight = True
+                                stream_pcm = isinstance(packet, PcmStreamChunk)
+                                local_pcm = isinstance(packet, PcmAudio)
+                                close_pcm = local_pcm or (stream_pcm and packet.end)
+                                replace = local_pcm or (stream_pcm and not self._stream_started)
+                                if stream_pcm:
+                                    packet.validate()
+                                    pcm, rate = packet.data, packet.sample_rate
+                                    self._stream_started = True
+                                elif local_pcm:
+                                    pcm, rate = packet.data, packet.sample_rate
+                                else:
+                                    pcm, rate = self._codec.decode(packet), self.output_sample_rate
+                                pcm = self.volume.apply(pcm)
+                    if not paused and packet is not None:
+                        if replace:
                             self._terminate(self._playback)
                             self._playback = None
-                        else:
-                            pcm, rate = self._codec.decode(packet), self.output_sample_rate
-                        pcm = self.volume.apply(pcm)
-                        if self._playback is None:
-                            self._open_playback(rate)
-                        process = self._playback
-                        fd = process.stdin.fileno()
+                        if self._playback is None and not self._open_playback(rate, generation):
+                            continue
+                        with self._lock:
+                            if generation != self._generation or self._stop.is_set() or self._interrupting:
+                                continue
+                            process = self._playback
+                            fd = process.stdin.fileno()
                 if packet is None:
                     if end_reply and process is not None:
                         self._drain_playback(process, generation)
                         with self._lock:
                             if generation == self._generation:
                                 self._inflight = False
-                    self._stop.wait(0.01)
+                    self._stop.wait(.01)
                     continue
                 offset = 0
                 write_deadline = time.monotonic() + max(15.0, len(pcm) / (rate * 2) + 3.0)
                 while offset < len(pcm) and not self._stop.is_set():
-                    with self._lock:
-                        if generation != self._generation:
-                            break
-                        if time.monotonic() > write_deadline:
-                            raise AudioError("PCM write timed out")
-                        if process.poll() is not None:
-                            raise AudioError("aplay exited during PCM write")
-                        if select.select([], [fd], [], 0)[1]:
-                            try:
-                                count = os.write(fd, pcm[offset:])
-                                offset += count
-                                if count and not self.first_write_monotonic:
-                                    self.first_write_monotonic = time.monotonic()
-                                self._play_until = max(time.monotonic(), self._play_until) + count / (rate * 2)
-                            except BlockingIOError:
-                                pass
+                    with self._playback_lock:
+                        with self._lock:
+                            if generation != self._generation or self._stop.is_set() or self._interrupting:
+                                break
+                            if time.monotonic() > write_deadline:
+                                raise AudioError("PCM write timed out")
+                            if process.poll() is not None:
+                                raise AudioError("aplay exited during PCM write")
+                            if select.select([], [fd], [], 0)[1]:
+                                try:
+                                    count = os.write(fd, pcm[offset:])
+                                    offset += count
+                                    if count and self._first_packet_at is not None:
+                                        elapsed = time.monotonic() - self._first_packet_at
+                                        self._timing["first_packet_to_write_ms"] = elapsed * 1000.0
+                                        self._timing_max("max_first_packet_to_write_ms", elapsed)
+                                        self._first_packet_at = None
+                                    if count and not self.first_write_monotonic:
+                                        self.first_write_monotonic = time.monotonic()
+                                    self._play_until = max(time.monotonic(), self._play_until) + count / (rate * 2)
+                                except BlockingIOError:
+                                    pass
                     if offset < len(pcm):
-                        self._stop.wait(0.01)
+                        self._stop.wait(.01)
                 if close_pcm:
                     self._drain_playback(process, generation, stream_pcm)
                 with self._lock:
@@ -380,6 +503,8 @@ class PatchXAudioIO(AudioIO):
 
     def finish_reply(self):
         with self._lock:
+            self._end_queue_empty(time.monotonic())
+            self._packet_at = None
             self._reply_end = self._generation
 
     def playback_busy(self):
@@ -387,35 +512,56 @@ class PatchXAudioIO(AudioIO):
             return self._reply_end == self._generation or super().playback_busy()
 
     def _drain_playback(self, process, generation, stream_pcm=False):
-        with self._lock:
-            if generation != self._generation or self._stop.is_set():
-                return
+        with self._playback_lock:
+            with self._lock:
+                if generation != self._generation or self._stop.is_set() or self._interrupting:
+                    return
+                deadline = max(time.monotonic(), self._play_until) + 3
             process.stdin.close()
-            deadline = max(time.monotonic(), self._play_until) + 3
         while process.poll() is None:
             if time.monotonic() > deadline:
                 raise AudioError("PCM playback drain timed out")
             self._stop.wait(.01)
             with self._lock:
-                if generation != self._generation or self._stop.is_set():
+                if generation != self._generation or self._stop.is_set() or self._interrupting:
                     return
-        with self._lock:
-            if generation != self._generation or self._stop.is_set():
-                return
-            if process.returncode != 0:
-                raise AudioError("PCM playback failed")
+        with self._playback_lock:
+            with self._lock:
+                if generation != self._generation or self._stop.is_set() or self._interrupting:
+                    return
+                if process.returncode != 0:
+                    raise AudioError("PCM playback failed")
             self._terminate(process)
             self._playback = None
-            self._play_until = 0.0
-            if stream_pcm:
-                self._stream_open = self._stream_ending = self._stream_started = False
-                self._stream_rate = self._stream_bytes = 0
-                self._stream_deadline = 0.0
+            with self._lock:
+                self._play_until = 0.0
+                if stream_pcm:
+                    self._stream_open = self._stream_ending = self._stream_started = False
+                    self._stream_rate = self._stream_bytes = 0
+                    self._stream_deadline = 0.0
+
+    def stop_capture(self):
+        self._capture_stop.set()
+        with self._lock:
+            self._capture_callback = None
+            process, thread = self._capture, self._capture_thread
+        self._terminate(process)
+        self._join(thread)
+        with self._lock:
+            if self._capture is process:
+                self._capture = None
+            if self._capture_thread is thread:
+                self._capture_thread = None
 
     def stop(self):
-        self._stop.set()
+        # Serialize the stop flag with the final write check, then reap playback
+        # before waiting for a capture callback that may take time to return.
+        with self._lock:
+            self._stop.set()
+            self._capture_stop.set()
+            self._capture_callback = None
         errors = []
-        for operation in (self.stop_capture, self.interrupt, lambda: self._join(self._output_thread)):
+        for operation in (self.interrupt, self.stop_capture, lambda: self._join(self._output_thread)):
             try:
                 operation()
             except Exception as error:
@@ -423,11 +569,12 @@ class PatchXAudioIO(AudioIO):
                 self.cleanup_uncertain = True
         if self._output_thread is not None and not self._output_thread.is_alive():
             self._output_thread = None
-        with self._lock:
+        with self._playback_lock:
             try:
                 self._release_speaker()
             except Exception as error:
                 errors.append(error)
+        with self._lock:
             if not errors and self._aec:
                 self._aec.close()
                 self._aec = None
@@ -441,7 +588,12 @@ class PatchXAudioIO(AudioIO):
     close = stop
 
     def snapshot(self):
-        return {"available": not self.cleanup_uncertain, "cleanup_uncertain": self.cleanup_uncertain,
+        with self._lock:
+            timing = dict(self._timing)
+            if self._queue_empty_at is not None:
+                timing["max_queue_empty_ms"] = max(timing["max_queue_empty_ms"],
+                    (time.monotonic() - self._queue_empty_at) * 1000.0)
+        return {"playback_timing": timing, "available": not self.cleanup_uncertain, "cleanup_uncertain": self.cleanup_uncertain,
                 "capture_active": not self._capture_stop.is_set(), "speaker_owned": self._speaker_owned,
                 "error": self.last_error, "volume": self.volume.snapshot(),
                 "capture_device": self.config["capture_device"], "playback_device": self.config["playback_device"],
