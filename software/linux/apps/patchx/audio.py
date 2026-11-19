@@ -212,7 +212,9 @@ class PatchXAudioIO(AudioIO):
         reference = bytearray()
         for row in struct.iter_unpack("<8h", data):
             microphone.extend(struct.pack("<h", row[0]))
-            reference.extend(struct.pack("<h", (row[6] + row[7]) // 2))
+            # Bothlent ref7/ref8 have opposite polarity on this mono route.
+            # Keep ref7 independent so the echo reference cannot cancel itself.
+            reference.extend(struct.pack("<h", row[6]))
         return self._aec.process_synchronous(bytes(microphone), bytes(reference))
 
     def _ensure_started(self):

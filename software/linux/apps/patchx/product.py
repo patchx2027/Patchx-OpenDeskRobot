@@ -1,8 +1,10 @@
 """PatchX product extension; inherits the bounded session/generation event gate."""
 import queue
+import audioop
 import time
 from collections import deque
 from apps.companion.core import Companion
+from .handsfree import BargeInGate
 from .protocol import BUSINESS_TYPES
 from .protocol import image_message, listen_mode_message, parse_business
 
@@ -10,7 +12,7 @@ from .protocol import image_message, listen_mode_message, parse_business
 class PatchXCompanion(Companion):
     def __init__(self, voice_config, business, camera_backend=None, camera_timeout_s=45.0,
                  display_service=None, motor_controller=None, handsfree=None, wake_prompt=None,
-                 wake_barge_in=False, **factories):
+                 wake_barge_in=False, wake_barge_min_rms=1000, **factories):
         self.display = display_service
         self.motor = motor_controller
         self.audio_cleanup_uncertain = False
@@ -20,10 +22,11 @@ class PatchXCompanion(Companion):
         self.wake_prompt_pending = False
         self.wake_armed = handsfree is not None
         self.wake_connecting = False
+        self.wake_last_rms = self.wake_peak_rms = 0
         self.standby_audio = None
         self.standby_retry_at = 0.
         self.barge_frames = deque(maxlen=12)
-        self.barge_speech_frames = 0
+        self.barge_gate = BargeInGate(min_rms=wake_barge_min_rms)
         super().__init__(voice_config, **factories)
         if self.handsfree:
             self.data["capabilities"].update(wake_word=True, automatic_barge_in=wake_barge_in)
@@ -172,6 +175,7 @@ class PatchXCompanion(Companion):
         self.wake_prompt_pending = False
         self._stop_standby()
         self.barge_frames.clear()
+        self.barge_gate.reset()
         self.special_listen_mode = ""
         self.camera_epoch += 1
         if self.camera is not None:
@@ -241,6 +245,8 @@ class PatchXCompanion(Companion):
         if epoch != self.capture_epoch:
             return
         if self.standby_audio is not None:
+            self.wake_last_rms = audioop.rms(pcm, 2)
+            self.wake_peak_rms = max(self.wake_peak_rms, self.wake_last_rms)
             if self.handsfree.wake(pcm):
                 self.diagnostics.emit("wake_detected")
                 self.wake_connecting = True
@@ -251,8 +257,7 @@ class PatchXCompanion(Companion):
             self.barge_frames.append(pcm)
             if not self.audio.playback_busy():
                 return
-            self.barge_speech_frames = self.barge_speech_frames + 1 if self.handsfree.speech(pcm) else 0
-            if self.barge_speech_frames >= 3:
+            if self.barge_gate.accept(pcm, self.handsfree.speech(pcm)):
                 self.audio.interrupt()
                 self.diagnostics.emit("voice_interrupt")
                 self.accept_audio = self.tts_ended = False
@@ -290,6 +295,9 @@ class PatchXCompanion(Companion):
     def snapshot(self):
         result = super().snapshot()
         result["patchx"] = self.business.snapshot()
+        if self.handsfree:
+            result["patchx"]["barge_in"] = self.barge_gate.snapshot()
+            result["patchx"]["wake_rms"] = {"last": self.wake_last_rms, "peak": self.wake_peak_rms}
         result["patchx"]["audio_cleanup_uncertain"] = self.audio_cleanup_uncertain
         if self.motor is not None:
             result["patchx"]["motor"] = self.motor.snapshot()
@@ -363,5 +371,5 @@ class PatchXCompanion(Companion):
         if (self.wake_barge_in and kind == "tts" and previous != "speaking"
                 and self.data["state"] == "speaking"):
             self.barge_frames.clear()
-            self.barge_speech_frames = 0
+            self.barge_gate.reset()
             self.handsfree.reset_speech()

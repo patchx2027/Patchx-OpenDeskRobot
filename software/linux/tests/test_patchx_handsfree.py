@@ -1,5 +1,6 @@
 """Exercise the device-owned cloud conversation lifecycle with fake audio."""
 import unittest
+import struct
 
 from apps.companion.audio import PcmAudio
 from apps.patchx.business import PatchXBusiness
@@ -38,10 +39,10 @@ class Detector:
         pass
 
     def wake(self, frame):
-        return frame == b"wake"
+        return frame == struct.pack("<960h", *([2000] * 960))
 
     def speech(self, frame):
-        return frame == b"speech"
+        return frame == struct.pack("<960h", *([1000] * 960))
 
 
 class HandsFreeTests(unittest.TestCase):
@@ -58,7 +59,7 @@ class HandsFreeTests(unittest.TestCase):
         self.addCleanup(core.close)
         core.start()
         wait_for(lambda: core.snapshot()["wake_waiting"])
-        core.standby_audio.frame(b"wake")
+        core.standby_audio.frame(struct.pack("<960h", *([2000] * 960)))
         wait_for(lambda: core.wake_prompt_pending)
         self.assertEqual(core.audio.prompt, prompt)
         self.assertFalse(core.audio.recording)
@@ -80,9 +81,9 @@ class HandsFreeTests(unittest.TestCase):
         core.start()
         wait_for(lambda: core.snapshot()["wake_waiting"])
         standby = core.standby_audio
-        standby.frame(b"not a keyword")
+        standby.frame(bytes(1920))
         self.assertIsNone(core.transport)
-        standby.frame(b"wake")
+        standby.frame(struct.pack("<960h", *([2000] * 960)))
         wait_for(lambda: core.snapshot()["state"] == "listening")
         transport, audio = core.transport, core.audio
         self.assertTrue(standby.closed)
@@ -99,9 +100,9 @@ class HandsFreeTests(unittest.TestCase):
         transport.message({"type": "tts", "state": "start"})
         transport.message(b"long reply")
         wait_for(audio.playback_busy)
-        audio.frame(b"echo")
-        for _ in range(3):
-            audio.frame(b"speech")
+        audio.frame(bytes(1920))
+        for _ in range(5):
+            audio.frame(struct.pack("<960h", *([1000] * 960)))
         wait_for(lambda: transport.sent[-1] == b"opus")
         self.assertIn({"type": "interrupt", "session_id": "fixture"}, transport.sent)
         self.assertFalse(audio.playback_busy())

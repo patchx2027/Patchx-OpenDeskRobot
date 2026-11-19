@@ -101,7 +101,8 @@ def create_runtime(config, audio_factory=None, codec_factory=None, transport_fac
                           camera_backend=camera_backend, camera_timeout_s=settings["camera_timeout_s"],
                           display_service=display_service, motor_controller=motor_controller,
                           handsfree=handsfree, wake_prompt=wake_prompt,
-                          wake_barge_in=settings["wake_barge_in"])
+                          wake_barge_in=settings["wake_barge_in"],
+                          wake_barge_min_rms=settings["wake_barge_min_rms"])
     if settings["mqtt_enabled"]:
         core.configure_mqtt(broker=settings["mqtt_broker"], port=settings["mqtt_port"], tls=settings["mqtt_tls"],
             device_id=voice["device_id"], env_names={"username": settings["mqtt_username_env"],

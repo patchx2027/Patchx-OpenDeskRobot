@@ -40,7 +40,7 @@ class ProductAudioTests(unittest.TestCase):
         self.assertEqual(command[command.index('-D') + 1], 'patchx_capture_array')
         self.assertEqual(command[command.index('-c') + 1], '8')
         audio._capture_pcm(struct.pack('<8h', 123, 2, 3, 4, 5, 6, 2000, 3000))
-        aec.process_synchronous.assert_called_once_with(struct.pack('<h', 123), struct.pack('<h', 2500))
+        aec.process_synchronous.assert_called_once_with(struct.pack('<h', 123), struct.pack('<h', 2000))
         audio.stop()
 
     def test_handshake_constructs_real_leaf_without_opening_and_shares_business_volume(self):

@@ -7,7 +7,7 @@ import re
 
 from apps.companion.config import validate
 
-DEFAULTS = {"wake_prompt_wav": "", "wake_assets": "", "wake_aec_library": "", "wake_barge_in": False, "client_ip": "", "backlight_enabled": False, "backlight_path": "",
+DEFAULTS = {"wake_prompt_wav": "", "wake_assets": "", "wake_aec_library": "", "wake_barge_in": False, "wake_barge_min_rms": 1000, "client_ip": "", "backlight_enabled": False, "backlight_path": "",
             "display_enabled": False, "display_device": "/dev/fb0", "motor_port": "",
             "audio_enabled": False, "volume_initial": 8,
             "audio_card_id": "rockchiprk809co", "audio_playback_route": "HP_NO_MIC",
@@ -44,6 +44,8 @@ def validate_product(values):
         raise ValueError("hands-free voice requires live realtime board audio, model assets and AEC")
     if product["wake_prompt_wav"] and not product["wake_assets"]:
         raise ValueError("wake prompt requires hands-free voice")
+    if type(product["wake_barge_min_rms"]) is not int or not 1 <= product["wake_barge_min_rms"] <= 32767:
+        raise ValueError("wake_barge_min_rms must be 1..32767 PCM16 RMS")
     if product["wake_barge_in"] and not product["wake_assets"]:
         raise ValueError("voice interruption requires hands-free voice")
     if product["client_ip"]:
