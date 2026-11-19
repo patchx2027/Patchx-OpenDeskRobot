@@ -1263,7 +1263,7 @@ static int bq2570x_pd_notifier_call(struct notifier_block *nb,
 	union power_supply_propval prop;
 	struct bq25700_state state;
 	int ret;
-	int vol_idx, cur_idx, chr_idx;
+	int vol_idx, cur_idx;
 
 	if (val != PSY_EVENT_PROP_CHANGED)
 		return NOTIFY_OK;
@@ -1297,20 +1297,26 @@ static int bq2570x_pd_notifier_call(struct notifier_block *nb,
 						&prop);
 		if (ret != 0)
 			return NOTIFY_OK;
-		vol_idx = bq25700_find_idx((prop.intval - 1280000 - 3200000), TBL_INPUTVOL);
-		ret = power_supply_get_property(psy, POWER_SUPPLY_PROP_CURRENT_NOW,
-						&prop);
-		if (ret != 0)
+		if (prop.intval < 1280000 + 3200000)
 			return NOTIFY_OK;
-		chr_idx = bq25700_find_idx(prop.intval, TBL_ICHG);
+		vol_idx = bq25700_find_idx((prop.intval - 1280000 - 3200000), TBL_INPUTVOL);
 
-		bq25700_field_write(bq, INPUT_CURRENT, cur_idx);
-		bq25700_field_write(bq, INPUT_VOLTAGE, vol_idx);
-		bq25700_field_write(bq, CHARGE_CURRENT, chr_idx);
+		ret = bq25700_field_write(bq, INPUT_CURRENT, cur_idx);
+		if (ret)
+			return NOTIFY_OK;
+		ret = bq25700_field_write(bq, INPUT_VOLTAGE, vol_idx);
+		if (ret)
+			return NOTIFY_OK;
+		/* Input-side PD current is not the battery charge-current target. */
+		ret = bq25700_field_write(bq, CHARGE_CURRENT, bq->init_data.ichg);
+		if (ret)
+			return NOTIFY_OK;
 		dev_info(bq->dev, "INPUT_CURRENT:%d, INPUT_VOLTAGE:%d, CHARGE_CURRENT:%d\n",
-			 cur_idx, vol_idx, chr_idx);
+			 cur_idx, vol_idx, bq->init_data.ichg);
 
-		bq25700_get_chip_state(bq, &state);
+		ret = bq25700_get_chip_state(bq, &state);
+		if (ret)
+			return NOTIFY_OK;
 		bq->state = state;
 		power_supply_changed(bq->supply_charger);
 	}
@@ -1674,7 +1680,7 @@ static int bq25700_register_cg_nb(struct bq25700_device *charger)
 static int bq25700_register_pd_nb(struct bq25700_device *charger)
 {
 	struct power_supply *notify_psy = NULL;
-	int vol_idx, cur_idx;
+	int vol_idx, cur_idx, input_current;
 	int ret;
 	union power_supply_propval prop;
 
@@ -1713,17 +1719,26 @@ static int bq25700_register_pd_nb(struct bq25700_device *charger)
 					POWER_SUPPLY_PROP_CURRENT_MAX, &prop);
 		if (ret != 0)
 			return ret;
+		input_current = prop.intval;
 		ret = power_supply_get_property(notify_psy,
 					POWER_SUPPLY_PROP_VOLTAGE_MAX, &prop);
 		if (ret != 0)
 			return ret;
 
-		cur_idx = bq25700_find_idx(prop.intval, TBL_INPUTCUR);
+		if (input_current <= 0 || prop.intval < 1280000 + 3200000)
+			return -EINVAL;
+		cur_idx = bq25700_find_idx(input_current, TBL_INPUTCUR);
 		vol_idx = bq25700_find_idx((prop.intval - 1280000 - 3200000), TBL_INPUTVOL);
-		bq25700_field_write(charger, INPUT_CURRENT, cur_idx);
-		bq25700_field_write(charger, INPUT_VOLTAGE, vol_idx);
-		bq25700_field_write(charger, CHARGE_CURRENT,
-				    charger->init_data.ichg);
+		ret = bq25700_field_write(charger, INPUT_CURRENT, cur_idx);
+		if (ret)
+			return ret;
+		ret = bq25700_field_write(charger, INPUT_VOLTAGE, vol_idx);
+		if (ret)
+			return ret;
+		ret = bq25700_field_write(charger, CHARGE_CURRENT,
+					  charger->init_data.ichg);
+		if (ret)
+			return ret;
 		dev_info(charger->dev, "INPUT_CURRENT:%d, INPUT_VOLTAGE:%d, CHARGE_CURRENT:%d\n",
 				 cur_idx, vol_idx, charger->init_data.ichg);
 	}

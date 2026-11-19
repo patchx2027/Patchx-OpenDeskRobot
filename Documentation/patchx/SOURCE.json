@@ -36,7 +36,8 @@
     "sound/soc/soc-dai.c": "fc15c8017a52c71c4f25172c5078a35e387d785268e81eb39c6ead1b83a0497d",
     "sound/soc/soc-generic-dmaengine-pcm.c": "794bccb85fde6094cbd3b1dcaf8f3d5bce6ae5c4c342047658c2934525b6724c",
     "sound/soc/soc-pcm.c": "5bae1c377b848238b5f75a18fcbb17a924064898cc9638489f866987db252586",
-    "drivers/power/supply/rk817_battery.c": "cd60923d7b268292b39a0caf4eb5a3a98be7f623c3ba5dd65c6e14e52baf702c"
+    "drivers/power/supply/rk817_battery.c": "cd60923d7b268292b39a0caf4eb5a3a98be7f623c3ba5dd65c6e14e52baf702c",
+    "drivers/power/supply/bq25700_charger.c": "ea2a7d6d7ec5f356c7d7a0b5f4e9aa585f8961f10f4b5abd14465fa3a62997d7"
   },
   "scope": "Kernel driver source derives from the audio-v5 inputs. The product device tree now declares the HP_NO_MIC amplifier wiring. Archived semantic comparisons refer to the pre-property DTB sources; source hashes describe the current tree. Product peripheral support is summarized in the root README.md; build scope is documented in BUILD.md.",
   "product_config": {

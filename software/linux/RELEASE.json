@@ -734,7 +734,7 @@
     },
     {
       "path": "../../Documentation/patchx/SOURCE.json",
-      "sha256": "6707c2147f3672a0830b50357e29ff6df968e4c62f7853e4ad9256718d503a2e"
+      "sha256": "c96f7f1ef4f6dd29c8c243c3584515eb1ab158dedbdf7af781e57170b8e7c3d6"
     },
     {
       "path": "../../drivers/power/supply/rk817_battery.c",
@@ -747,6 +747,14 @@
     {
       "path": "../../tools/testing/selftests/power_supply/test_rk817_charge_status.py",
       "sha256": "7cc756d7d26d1b7d698168f08671c4b5da76e8b849fbf0d1022d6d99a1330768"
+    },
+    {
+      "path": "../../drivers/power/supply/bq25700_charger.c",
+      "sha256": "ea2a7d6d7ec5f356c7d7a0b5f4e9aa585f8961f10f4b5abd14465fa3a62997d7"
+    },
+    {
+      "path": "../../tools/testing/selftests/power_supply/test_bq25700_pd.py",
+      "sha256": "a3d2c65087721601e8053c8efec70969249125283d40b64c251ea05a005d33bd"
     }
   ],
   "updated_date": "2026-11-20",
