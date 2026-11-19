@@ -731,6 +731,22 @@
     {
       "path": "tools/run-host-fixtures.py",
       "sha256": "5e3ce5f3b5738a4510825e52f12516f38035eb2010b2bee2b644208a0ff9b8b6"
+    },
+    {
+      "path": "../../Documentation/patchx/SOURCE.json",
+      "sha256": "6707c2147f3672a0830b50357e29ff6df968e4c62f7853e4ad9256718d503a2e"
+    },
+    {
+      "path": "../../drivers/power/supply/rk817_battery.c",
+      "sha256": "cd60923d7b268292b39a0caf4eb5a3a98be7f623c3ba5dd65c6e14e52baf702c"
+    },
+    {
+      "path": "../../tools/testing/selftests/power_supply/test_rk817_ocv.py",
+      "sha256": "5ec4d6e8377becebba7e2d38edef0dc1ea9b488b6ccc156e0fd8b070caeff5a3"
+    },
+    {
+      "path": "../../tools/testing/selftests/power_supply/test_rk817_charge_status.py",
+      "sha256": "7cc756d7d26d1b7d698168f08671c4b5da76e8b849fbf0d1022d6d99a1330768"
     }
   ],
   "updated_date": "2026-11-20",

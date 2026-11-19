@@ -1305,6 +1305,12 @@ static int rk817_bat_vol_to_soc(struct rk817_battery_device *battery,
 	return ocv_soc;
 }
 
+/* OCV tables and DT thresholds use percent; saved/display SOC uses 0.001%. */
+static int rk817_bat_percent_to_dsoc(int percent)
+{
+	return percent * 1000;
+}
+
 static int rk817_bat_vol_to_cap(struct rk817_battery_device *battery,
 				int voltage)
 {
@@ -1362,7 +1368,12 @@ static int rk817_bat_get_charge_status(struct rk817_battery_device *battery)
 	int status;
 
 	if (battery->chip_id == RK809_ID) {
-		if ((battery->voltage_avg > battery->pdata->design_max_voltage) &&
+		/* A missing DT threshold is zero, not evidence of charge completion.
+		 * Only infer completion with a configured threshold and input present.
+		 */
+		if (battery->plugin_trigger &&
+		    battery->pdata->design_max_voltage > 0 &&
+		    (battery->voltage_avg > battery->pdata->design_max_voltage) &&
 		    (battery->current_avg > 0) &&
 		    ((battery->current_avg < 500) ||
 		     (battery->rsoc / 1000 == 100)))
@@ -1638,12 +1649,14 @@ static void rk817_bat_not_first_pwron(struct rk817_battery_device *battery)
 	} else if (battery->is_ocv_calib) {
 		/* not initialized and poweroff_cnt above 30 min */
 		ocv_vol = rk817_bat_get_ocv_voltage(battery);
-		ocv_soc = rk817_bat_vol_to_soc(battery, ocv_vol);
+		ocv_soc = rk817_bat_percent_to_dsoc(
+			rk817_bat_vol_to_soc(battery, ocv_vol));
 		ocv_cap = rk817_bat_vol_to_cap(battery, ocv_vol);
 		pre_cap = ocv_cap;
 		battery->ocv_pre_dsoc = pre_soc;
 		battery->ocv_new_dsoc = ocv_soc;
-		if (abs(ocv_soc - pre_soc) >= battery->pdata->max_soc_offset) {
+		if (abs(ocv_soc - pre_soc) >=
+		    rk817_bat_percent_to_dsoc(battery->pdata->max_soc_offset)) {
 			battery->ocv_pre_dsoc = pre_soc;
 			battery->ocv_new_dsoc = ocv_soc;
 			battery->is_max_soc_offset = true;
@@ -1654,11 +1667,12 @@ static void rk817_bat_not_first_pwron(struct rk817_battery_device *battery)
 		BAT_INFO("OCV calib: cap=%d, rsoc=%d\n", ocv_cap, ocv_soc);
 	} else if (battery->pwroff_min > 0) {
 		ocv_vol = rk817_bat_get_ocv_voltage(battery);
-		ocv_soc = rk817_bat_vol_to_soc(battery, ocv_vol);
+		ocv_soc = rk817_bat_percent_to_dsoc(
+			rk817_bat_vol_to_soc(battery, ocv_vol));
 		ocv_cap = rk817_bat_vol_to_cap(battery, ocv_vol);
 		battery->force_pre_dsoc = pre_soc;
 		battery->force_new_dsoc = ocv_soc;
-		if (abs(ocv_soc - pre_soc) >= 80) {
+		if (abs(ocv_soc - pre_soc) >= rk817_bat_percent_to_dsoc(80)) {
 			battery->is_force_calib = true;
 			BAT_INFO("dsoc force calib: %d -> %d\n",
 				 pre_soc, ocv_soc);
