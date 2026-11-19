@@ -499,6 +499,7 @@ struct rk817_battery_device {
 	struct work_struct		resume_work;
 	struct wake_lock		wake_lock;
 	struct timer_list		caltimer;
+	bool				stopping;
 
 	int				res_div;
 	int				bat_res;
@@ -1702,6 +1703,9 @@ static void rk817_bat_caltimer_isr(struct timer_list *t)
 	struct rk817_battery_device *battery =
 		from_timer(battery, t, caltimer);
 
+	if (READ_ONCE(battery->stopping))
+		return;
+
 	mod_timer(&battery->caltimer, jiffies + MINUTE(8) * HZ);
 	queue_delayed_work(battery->bat_monitor_wq,
 			   &battery->calib_delay_work,
@@ -1727,8 +1731,6 @@ static void rk817_bat_init_caltimer(struct rk817_battery_device *battery)
 	timer_setup(&battery->caltimer,
 		    rk817_bat_caltimer_isr,
 		    0);
-	battery->caltimer.expires = jiffies + MINUTE(8) * HZ;
-	add_timer(&battery->caltimer);
 	INIT_DELAYED_WORK(&battery->calib_delay_work, rk817_bat_internal_calib);
 }
 
@@ -1740,7 +1742,6 @@ static void rk817_bat_init_fg(struct rk817_battery_device *battery)
 	rk817_bat_init_voltage_kb(battery);
 	rk817_bat_set_relax_sample(battery);
 	rk817_bat_ocv_thre(battery, 0xff);
-	rk817_bat_init_caltimer(battery);
 	rk817_bat_rsoc_init(battery);
 	rk817_bat_init_coulomb_cap(battery, battery->nac);
 	DBG("rsoc%d, fcc = %d\n", battery->rsoc, battery->fcc);
@@ -2882,6 +2883,9 @@ static void rk817_battery_work(struct work_struct *work)
 			     struct rk817_battery_device,
 			     bat_delay_work.work);
 
+	if (READ_ONCE(battery->stopping))
+		return;
+
 	rk817_bat_update_info(battery);
 	rk817_bat_lowpwr_check(battery);
 	rk817_bat_display_smooth(battery);
@@ -2895,8 +2899,9 @@ static void rk817_battery_work(struct work_struct *work)
 		rk817_bat_field_write(battery, CUR_CALIB_UPD, 0x01);
 	}
 
-	queue_delayed_work(battery->bat_monitor_wq, &battery->bat_delay_work,
-			   msecs_to_jiffies(battery->monitor_ms));
+	if (!READ_ONCE(battery->stopping))
+		queue_delayed_work(battery->bat_monitor_wq, &battery->bat_delay_work,
+				   msecs_to_jiffies(battery->monitor_ms));
 }
 
 static irqreturn_t rk809_plug_in_isr(int irq, void *cg)
@@ -2904,6 +2909,8 @@ static irqreturn_t rk809_plug_in_isr(int irq, void *cg)
 	struct rk817_battery_device *battery;
 
 	battery = (struct rk817_battery_device *)cg;
+	if (READ_ONCE(battery->stopping))
+		return IRQ_HANDLED;
 	battery->plugin_trigger = 1;
 	battery->plugout_trigger = 0;
 	power_supply_changed(battery->bat);
@@ -2918,6 +2925,8 @@ static irqreturn_t rk809_plug_out_isr(int irq, void *cg)
 	struct rk817_battery_device *battery;
 
 	battery = (struct rk817_battery_device *)cg;
+	if (READ_ONCE(battery->stopping))
+		return IRQ_HANDLED;
 	battery->plugin_trigger = 0;
 	battery->plugout_trigger = 1;
 	power_supply_changed(battery->bat);
@@ -2986,6 +2995,34 @@ static const struct of_device_id rk817_bat_of_match[] = {
 };
 #endif
 
+static void rk817_bat_destroy_workqueue(void *data)
+{
+	struct rk817_battery_device *battery = data;
+
+	destroy_workqueue(battery->bat_monitor_wq);
+}
+
+static void rk817_bat_destroy_wake_lock(void *data)
+{
+	struct rk817_battery_device *battery = data;
+
+	wake_lock_destroy(&battery->wake_lock);
+}
+
+static void rk817_bat_quiesce(void *data)
+{
+	struct rk817_battery_device *battery = data;
+
+	/* Repeatable for shutdown followed by devres release. Stop producers
+	 * before consumers; resume_work can itself queue bat_delay_work.
+	 */
+	WRITE_ONCE(battery->stopping, true);
+	del_timer_sync(&battery->caltimer);
+	cancel_work_sync(&battery->resume_work);
+	cancel_delayed_work_sync(&battery->calib_delay_work);
+	cancel_delayed_work_sync(&battery->bat_delay_work);
+}
+
 static int rk817_battery_probe(struct platform_device *pdev)
 {
 	const struct of_device_id *of_id =
@@ -3000,13 +3037,14 @@ static int rk817_battery_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	battery = devm_kzalloc(&client->dev, sizeof(*battery), GFP_KERNEL);
+	battery = devm_kzalloc(&pdev->dev, sizeof(*battery), GFP_KERNEL);
 	if (!battery)
-		return -EINVAL;
+		return -ENOMEM;
 
 	battery->rk817 = rk817;
 	battery->client = client;
 	battery->dev = &pdev->dev;
+	battery->pdev = pdev;
 	platform_set_drvdata(pdev, battery);
 	battery->chip_id = rk817->variant;
 
@@ -3035,19 +3073,32 @@ static int rk817_battery_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	rk817_bat_init_info(battery);
-	rk817_bat_init_fg(battery);
-
-	rk817_battery_debug_info(battery);
-	rk817_bat_update_info(battery);
-
-	rk817_bat_output_info(battery);
+	/* Prepare every callback before registering cleanup. No asynchronous
+	 * activity starts until all supplies and IRQs have been registered.
+	 */
+	INIT_DELAYED_WORK(&battery->bat_delay_work, rk817_battery_work);
+	INIT_WORK(&battery->resume_work, rk817_bat_resume_work);
+	rk817_bat_init_caltimer(battery);
 	battery->bat_monitor_wq = alloc_ordered_workqueue("%s",
 			WQ_MEM_RECLAIM | WQ_FREEZABLE, "rk817-bat-monitor-wq");
-	INIT_DELAYED_WORK(&battery->bat_delay_work, rk817_battery_work);
-	queue_delayed_work(battery->bat_monitor_wq, &battery->bat_delay_work,
-			   msecs_to_jiffies(TIMER_MS_COUNTS * 5));
-	INIT_WORK(&battery->resume_work, rk817_bat_resume_work);
+	if (!battery->bat_monitor_wq)
+		return -ENOMEM;
+	ret = devm_add_action_or_reset(battery->dev,
+				       rk817_bat_destroy_workqueue, battery);
+	if (ret)
+		return ret;
+	wake_lock_init(&battery->wake_lock, WAKE_LOCK_SUSPEND,
+		       "rk817_bat_lock");
+	ret = devm_add_action_or_reset(battery->dev,
+				       rk817_bat_destroy_wake_lock, battery);
+	if (ret)
+		return ret;
+
+	rk817_bat_init_info(battery);
+	rk817_bat_init_fg(battery);
+	rk817_battery_debug_info(battery);
+	rk817_bat_update_info(battery);
+	rk817_bat_output_info(battery);
 
 	ret = rk817_bat_init_power_supply(battery);
 	if (ret) {
@@ -3062,11 +3113,22 @@ static int rk817_battery_probe(struct platform_device *pdev)
 		}
 	}
 
-	if (battery->chip_id == RK809_ID)
-		rk809_charge_init_irqs(battery);
+	/* Reverse devres order: IRQs, quiesce, supplies, wake lock, queue,
+	 * then the child-owned fields and allocation.
+	 */
+	ret = devm_add_action_or_reset(battery->dev,
+				       rk817_bat_quiesce, battery);
+	if (ret)
+		return ret;
+	if (battery->chip_id == RK809_ID) {
+		ret = rk809_charge_init_irqs(battery);
+		if (ret)
+			return ret;
+	}
 
-	wake_lock_init(&battery->wake_lock, WAKE_LOCK_SUSPEND,
-		       "rk817_bat_lock");
+	mod_timer(&battery->caltimer, jiffies + MINUTE(8) * HZ);
+	queue_delayed_work(battery->bat_monitor_wq, &battery->bat_delay_work,
+			   msecs_to_jiffies(TIMER_MS_COUNTS * 5));
 
 	DBG("name: 0x%x", rk817_bat_field_read(battery, CHIP_NAME_H));
 	DBG("%x\n", rk817_bat_field_read(battery, CHIP_NAME_L));
@@ -3077,6 +3139,7 @@ static int rk817_battery_probe(struct platform_device *pdev)
 
 static void rk817_battery_shutdown(struct platform_device *dev)
 {
+	rk817_bat_quiesce(platform_get_drvdata(dev));
 }
 
 static time64_t rk817_get_rtc_sec(void)
@@ -3105,6 +3168,9 @@ static int  rk817_bat_pm_suspend(struct device *dev)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct rk817_battery_device *battery = dev_get_drvdata(&pdev->dev);
+
+	if (READ_ONCE(battery->stopping))
+		return 0;
 
 	cancel_delayed_work_sync(&battery->bat_delay_work);
 
@@ -3333,6 +3399,9 @@ static void rk817_bat_resume_work(struct work_struct *work)
 	struct rk817_battery_device *battery = container_of(work, struct rk817_battery_device, resume_work);
 	int interval_sec = 0, time_step = 0, pwroff_vol;
 
+	if (READ_ONCE(battery->stopping))
+		return;
+
 	battery->s2r = true;
 	battery->current_avg = rk817_bat_get_avg_current(battery);
 	battery->voltage_relax = rk817_bat_get_relax_voltage(battery);
@@ -3375,15 +3444,17 @@ static void rk817_bat_resume_work(struct work_struct *work)
 	    battery->voltage_avg < battery->pdata->pwroff_vol))
 		wake_lock_timeout(&battery->wake_lock, msecs_to_jiffies(2000));
 
-	queue_delayed_work(battery->bat_monitor_wq, &battery->bat_delay_work,
-			   msecs_to_jiffies(1000));
+	if (!READ_ONCE(battery->stopping))
+		queue_delayed_work(battery->bat_monitor_wq, &battery->bat_delay_work,
+				   msecs_to_jiffies(1000));
 }
 
 static int rk817_bat_pm_resume(struct device *dev)
 {
 	struct rk817_battery_device *battery = dev_get_drvdata(dev);
 
-	queue_work(battery->bat_monitor_wq, &battery->resume_work);
+	if (!READ_ONCE(battery->stopping))
+		queue_work(battery->bat_monitor_wq, &battery->resume_work);
 
 	return 0;
 }

@@ -115,6 +115,29 @@
         vcc8-supply = <&vcc3v3_sys>;
         vcc9-supply = <&vcc3v3_sys>;
         wakeup-source;
+        battery {
+            compatible = "rk817,battery";
+            /* Original 3568A battery-gauge parameters. This node does not
+             * enable the separate BQ25703 charger or Type-C controller.
+             */
+            ocv_table = <7000 7250 7370 7384 7436 7470 7496
+                         7520 7548 7576 7604 7632 7668 7706
+                         7754 7816 7892 7950 8036 8142 8212>;
+            design_capacity = <3500>;
+            design_qmax = <3750>;
+            sample_res = <10>;
+            bat_res = <100>;
+            bat_res_up = <140>;
+            bat_res_down = <20>;
+            virtual_power = <0>;
+            power_off_thresd = <7000>;
+            zero_algorithm_vol = <7700>;
+            monitor_sec = <5>;
+            max_soc_offset = <60>;
+            sleep_enter_current = <300>;
+            sleep_exit_current = <300>;
+            sleep_filter_current = <100>;
+        };
         pinctrl_rk8xx: pinctrl_rk8xx {
             #gpio-cells = <2>;
             gpio-controller;
