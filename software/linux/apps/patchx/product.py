@@ -12,9 +12,10 @@ from .protocol import image_message, listen_mode_message, parse_business
 class PatchXCompanion(Companion):
     def __init__(self, voice_config, business, camera_backend=None, camera_timeout_s=45.0,
                  display_service=None, motor_controller=None, handsfree=None, wake_prompt=None,
-                 wake_barge_in=False, wake_barge_min_rms=1000, **factories):
+                 wake_barge_in=False, wake_barge_min_rms=1000, power_supply=None, **factories):
         self.display = display_service
         self.motor = motor_controller
+        self.power_supply = power_supply
         self.audio_cleanup_uncertain = False
         self.handsfree = handsfree
         self.wake_barge_in = wake_barge_in
@@ -211,6 +212,10 @@ class PatchXCompanion(Companion):
         super()._action(action)
 
     def _start_wake_listening(self):
+        if self.display is not None and self.business.backlight is not None:
+            light = self.business.backlight.snapshot()
+            if light.get("available") and light.get("verified") and light["raw"] == 0:
+                self.business.absolute_setting("brightness", light["maximum"])
         self.wake_prompt_pending = False
         self._action("unmute")
         self._set(continuous=True)
@@ -295,6 +300,8 @@ class PatchXCompanion(Companion):
     def snapshot(self):
         result = super().snapshot()
         result["patchx"] = self.business.snapshot()
+        result["patchx"]["power"] = (self.power_supply.snapshot() if self.power_supply is not None else
+                                     {"available": False, "errors": {"power": "reader not configured"}})
         if self.handsfree:
             result["patchx"]["barge_in"] = self.barge_gate.snapshot()
             result["patchx"]["wake_rms"] = {"last": self.wake_last_rms, "peak": self.wake_peak_rms}

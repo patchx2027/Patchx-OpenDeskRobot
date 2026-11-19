@@ -13,7 +13,10 @@ import stat
 import subprocess
 import time
 
-KERNEL = "5.10.160-rt89-g9f9e9d18574d-dirty"
+KERNELS = frozenset((
+    "5.10.160-rt89-g9f9e9d18574d-dirty",
+    "5.10.160-rt89-gb956a24e75a8",
+))
 _cancelled = False
 LOCKED_INPUTS = {
     "bin/aiq-finite.aarch64": "99e332837b4c5db139ccd97487c8b9d768d81644894cea9554fc9dc8df453e82",
@@ -100,9 +103,14 @@ def _lines(path, marker):
 
 
 def _hardware_idle(wait_s=0):
+    supplies = [path for path in Path("/sys/class/regulator").glob("regulator.*")
+                if (path / "name").read_text(encoding="ascii").strip() == "vcc_camera_module"]
+    if len(supplies) != 1:
+        raise ValueError("native camera supply identity rejected")
+    supply = supplies[0]
     expected = {
-        "/sys/class/regulator/regulator.1/state": "disabled",
-        "/sys/class/regulator/regulator.1/num_users": "0",
+        str(supply / "state"): "disabled",
+        str(supply / "num_users"): "0",
         "/sys/bus/i2c/devices/2-0036/power/runtime_status": "suspended",
         "/sys/bus/platform/devices/rkisp-vir0/power/runtime_status": "suspended",
         "/sys/bus/platform/devices/fdff0000.rkisp/power/runtime_status": "suspended",
@@ -137,7 +145,7 @@ def _run_supervisor(argv):
 
 
 def capture(isp_root, encoder, output, budget):
-    if os.uname().release != KERNEL or Path("/proc/sys/kernel/tainted").read_text().strip() != "0":
+    if os.uname().release not in KERNELS or Path("/proc/sys/kernel/tainted").read_text().strip() != "0":
         raise ValueError("native camera platform rejected")
     if Path("/proc/sys/kernel/core_pattern").read_text().startswith("|"):
         raise ValueError("native camera core handler rejected")

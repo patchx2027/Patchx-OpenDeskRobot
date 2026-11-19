@@ -1,6 +1,7 @@
 """Exercise the device-owned cloud conversation lifecycle with fake audio."""
 import unittest
 import struct
+from unittest import mock
 
 from apps.companion.audio import PcmAudio
 from apps.patchx.business import PatchXBusiness
@@ -67,6 +68,21 @@ class HandsFreeTests(unittest.TestCase):
         core.audio.playing = False
         wait_for(lambda: core.audio.recording)
         self.assertEqual(core.transport.sent[-1]["state"], "start")
+
+    def test_wake_lights_an_off_display_and_keeps_user_brightness(self):
+        light = mock.Mock()
+        light.snapshot.return_value = {"available": True, "verified": True, "raw": 0, "maximum": 255}
+        light.set_raw.return_value = {"available": True, "verified": True, "raw": 255}
+        business = PatchXBusiness(backlight=light)
+        core = PatchXCompanion(validate_product({})["voice"], business,
+                               display_service=mock.Mock())
+        with mock.patch.object(core, "_action"):
+            core._start_wake_listening()
+            light.set_raw.assert_called_once_with(255)
+            light.set_raw.reset_mock()
+            light.snapshot.return_value = {"available": True, "verified": True, "raw": 80, "maximum": 255}
+            core._start_wake_listening()
+            light.set_raw.assert_not_called()
 
     def test_wake_followup_barge_in_and_mute(self):
         voice = validate_product({

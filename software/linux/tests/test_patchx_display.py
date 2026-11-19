@@ -218,6 +218,16 @@ class DisplayTests(unittest.TestCase):
         self.assertFalse(state["cleanup_uncertain"])
         self.assertFalse(state["thread_alive"])
 
+    def test_rotation_draws_upright_and_restores_original_scanout(self):
+        service = self.service(rotation=180)
+        self.assertTrue(service.start())
+        wait_for(lambda: service.snapshot()["frames_written"] >= 1)
+        expected = display._render("idle", "neutral")
+        groups = [expected[i:i+4] for i in range(0, len(expected), 4)]
+        self.assertEqual(self.device.read_bytes(), b"".join(reversed(groups)))
+        self.assertTrue(service.close())
+        self.assertEqual(self.device.read_bytes(), ORIGINAL)
+
     def test_unknown_expression_falls_back_and_known_ids_are_only_hints(self):
         service = self.service()
         self.assertTrue(service.start())

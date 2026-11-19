@@ -8,7 +8,7 @@ import re
 from apps.companion.config import validate
 
 DEFAULTS = {"wake_prompt_wav": "", "wake_assets": "", "wake_aec_library": "", "wake_barge_in": False, "wake_barge_min_rms": 1000, "client_ip": "", "backlight_enabled": False, "backlight_path": "",
-            "display_enabled": False, "display_device": "/dev/fb0", "motor_port": "",
+            "display_enabled": False, "display_rotation": 0, "display_device": "/dev/fb0", "motor_port": "",
             "audio_enabled": False, "volume_initial": 8,
             "audio_card_id": "rockchiprk809co", "audio_playback_route": "HP_NO_MIC",
             "camera_enabled": False, "camera_program": "", "camera_work_dir": "",
@@ -58,6 +58,8 @@ def validate_product(values):
             raise ValueError(key + " must be absolute")
     if product["backlight_enabled"] and (voice["mode"] != "live" or not product["backlight_path"]):
         raise ValueError("backlight requires live mode and an explicit absolute path")
+    if type(product["display_rotation"]) is not int or product["display_rotation"] not in (0, 180):
+        raise ValueError("display_rotation must be 0 or 180 degrees")
     if product["display_enabled"] and (voice["mode"] != "live" or not product["display_device"]):
         raise ValueError("display requires live mode and an explicit absolute device")
     if product["motor_port"] and voice["mode"] != "live":

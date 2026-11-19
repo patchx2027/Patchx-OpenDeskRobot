@@ -8,6 +8,7 @@ from apps.companion.server import Server
 from .business import PatchXBusiness
 from .config import load_product, validate_product
 from .devices import LinuxBacklight
+from .power import LinuxPowerSupply
 from .product import PatchXCompanion
 from .transport import PatchXCloudTransport
 
@@ -81,7 +82,7 @@ def create_runtime(config, audio_factory=None, codec_factory=None, transport_fac
         motor_controller = MotorController(settings["motor_port"])
     if display_service is None and settings["display_enabled"]:
         from .display import DisplayService
-        display_service = DisplayService(settings["display_device"])
+        display_service = DisplayService(settings["display_device"], rotation=settings["display_rotation"])
     if camera_backend is None and settings["camera_enabled"]:
         from .camera import CommandCameraBackend
         camera_backend = CommandCameraBackend(settings["camera_program"], settings["camera_work_dir"],
@@ -100,6 +101,7 @@ def create_runtime(config, audio_factory=None, codec_factory=None, transport_fac
                           codec_factory=codec_factory or OpusCodec, transport_factory=transport_factory,
                           camera_backend=camera_backend, camera_timeout_s=settings["camera_timeout_s"],
                           display_service=display_service, motor_controller=motor_controller,
+                          power_supply=LinuxPowerSupply(),
                           handsfree=handsfree, wake_prompt=wake_prompt,
                           wake_barge_in=settings["wake_barge_in"],
                           wake_barge_min_rms=settings["wake_barge_min_rms"])

@@ -7,6 +7,7 @@ by the companion web avatar, not a replacement of unknown Unity semantics.
 import fcntl
 import math
 import mmap
+from array import array
 import os
 import stat
 import struct
@@ -129,7 +130,7 @@ class DisplayService:
     START_TIMEOUT_S = 2.0
     FRAME_TIMEOUT_S = 1.0
 
-    def __init__(self, device="/dev/fb0", close_timeout_s=2.0):
+    def __init__(self, device="/dev/fb0", close_timeout_s=2.0, rotation=0):
         try:
             device = os.fspath(device)
         except TypeError:
@@ -140,6 +141,9 @@ class DisplayService:
         if (type(close_timeout_s) not in (int, float) or not math.isfinite(close_timeout_s) or
                 not .05 <= close_timeout_s <= 5):
             raise ValueError("display close timeout must be between 0.05 and 5 seconds")
+        if type(rotation) is not int or rotation not in (0, 180):
+            raise ValueError("display rotation must be 0 or 180 degrees")
+        self.rotation = rotation
         self.device, self.close_timeout_s = device, float(close_timeout_s)
         self._condition = threading.Condition(threading.Lock())
         self._stop, self._ready = threading.Event(), threading.Event()
@@ -149,7 +153,7 @@ class DisplayService:
         self._validated = False
         self._close_uncertain = False
         self._descriptor_closing = False
-        self._data = {"status": "stopped", "error": "", "cleanup_uncertain": False,
+        self._data = {"rotation": rotation, "status": "stopped", "error": "", "cleanup_uncertain": False,
                       "pixels_saved": False, "pixels_restored": False,
                       "frames_written": 0, "updates": 0, "replaced_updates": 0,
                       "state": "idle", "emotion": "neutral", "rendered_state": "",
@@ -337,6 +341,11 @@ class DisplayService:
                     request, self._pending = self._pending, None
                 state, emotion = request[:2]
                 frame = _render(state, emotion)
+                if self.rotation == 180:
+                    pixels = array("I")
+                    pixels.frombytes(frame)
+                    pixels.reverse()
+                    frame = pixels.tobytes()
                 self._layout()
                 if not self._write(frame, True):
                     break
