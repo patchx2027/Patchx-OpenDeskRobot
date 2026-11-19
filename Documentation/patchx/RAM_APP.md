@@ -4,7 +4,7 @@
 
 ## 1. 准备构建输入
 
-先按[Linux RAM 启动](RAM_BOOT.md)备份原厂 `boot`、`dtbo`，构建产品 Image、DTB 和 RK817 模块。沿用其中的 `BACKUPS`、`OUT`、`BUILD_ROOT` 和静态 ARM64 `BUSYBOX`。BusyBox 还需提供 `chroot`、`ip`（含 link 操作）、`gzip`、`tar`、`sha256sum`、`grep`、`cp`、`mkdir`、`rm` 与 `umount`，以及 `mount --bind` 和 `--install -s`。
+先按[Linux RAM 启动](RAM_BOOT.md)备份原厂 `boot`、`dtbo`，构建产品 Image、DTB 和 RK817 codec、battery 模块。沿用其中的 `BACKUPS`、`OUT`、`BUILD_ROOT` 和静态 ARM64 `BUSYBOX`。BusyBox 还需提供 `chroot`、`ip`（含 link 操作）、`gzip`、`tar`、`sha256sum`、`grep`、`cp`、`mkdir`、`rm` 与 `umount`，以及 `mount --bind` 和 `--install -s`。
 
 另备一个自己的 ARM64 Linux 运行环境，归档为 `runtime.tar.gz`，顶层目录必须为 `runtime/`：
 
@@ -28,6 +28,7 @@ CACHE_PATH=patchx-ram-app/runtime.tar.gz
 tools/patchx/build-rk3568-patchx-initramfs.py \
     --busybox "$BUSYBOX" \
     --codec "$OUT/sound/soc/codecs/snd-soc-rk817.ko" \
+    --battery "$OUT/drivers/power/supply/rk817_battery.ko" \
     --runtime-archive "$BUILD_ROOT/runtime.tar.gz" \
     --cache-path "$CACHE_PATH" \
     --output "$BUILD_ROOT/patchx-app-initramfs.cpio.gz"
@@ -41,6 +42,8 @@ tools/patchx/build-rk3568-ram-boot.py \
     --initramfs "$BUILD_ROOT/patchx-app-initramfs.cpio.gz" \
     --output "$BUILD_ROOT/patchx-app-ram.img"
 ```
+
+`--battery` 可省略；指定时会把模块放入 initramfs，启动脚本在 App 启动前加载。battery、codec 与 Image 必须来自同次树内构建，使用 `modinfo -F intree` 核对模块标记为 `Y`。电量读取和充电状态的边界见[构建说明](BUILD.md#电量读取与生命周期检查)。
 
 initramfs 包含当前检出的 `apps/patchx`、`apps/companion`、配置和自启动脚本。ARM64 运行环境仍是独立的缓存文件。自启动脚本以 `ro,noload` 挂载 `cache` 分区，核对归档 SHA-256 并解包到 RAM，然后卸载缓存。应用在 RAM 中使用该用户空间运行。启用在线服务前，请在 Linux 中配置板卡网络和匹配的 Wi‑Fi 固件。
 

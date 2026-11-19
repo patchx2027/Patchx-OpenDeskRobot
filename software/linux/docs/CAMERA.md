@@ -77,10 +77,10 @@ CMAKE_DISABLE_FIND_PACKAGE_libdrm=TRUE
 
 `isp_capture.py` 保留以下原实测约束：
 
-- `KERNEL` 为 `5.10.160-rt89-g9f9e9d18574d-dirty`，内核 taint 必须为 0。
+- `KERNELS` 只接受 `5.10.160-rt89-g9f9e9d18574d-dirty` 和 `5.10.160-rt89-gb956a24e75a8` 两个完整 release，内核 taint 必须为 0。
 - `LOCKED_INPUTS` 逐项核对 9 个文件的 SHA：helper、supervisor、IQ、加载器及五个运行库。
 - `/dev/video0` 必须是字符设备；实际模组路径为 `/sys/bus/i2c/devices/2-0036`。
-- `regulator.1` 必须 disabled 且 users 为 0；sensor、`rkisp-vir0` 和 `fdff0000.rkisp` 的 runtime PM 必须 suspended。
+- 按 `/sys/class/regulator/regulator.*/name` 精确查找唯一的 `vcc_camera_module`，其 `state` 必须为 `disabled`、`num_users` 为 `0`；缺失、重名或读取失败均拒绝。regulator 编号会随设备树和驱动变化，不能固定为 `regulator.1`。sensor、`rkisp-vir0` 和 `fdff0000.rkisp` 的 runtime PM 必须 suspended。
 - 输出目录必须归当前用户所有、权限 0700 且为空；帧尺寸、时间戳、格式和完整清理回执均要符合契约。
 
 因此，新工具链重建后的不同字节、新的库或新的 kernel release 会被拒绝，这是当前适配器的预期行为。适配新环境时，应从实际构建结果生成输入清单，核对 SDK/内核 ABI、模组身份与节点路径，更新相机启动配置及适配器中的精确清单和平台约束，再完成相应静态与板端验收。不要删除 SHA、release、PM 或清理检查来绕过失败。本次发布没有把新构建产物认定为原实测二进制。

@@ -35,14 +35,15 @@
     "sound/soc/soc-core.c": "662098c11fffd17926835c31823294fa8593aabc10e7eb1db4d89058b904232b",
     "sound/soc/soc-dai.c": "fc15c8017a52c71c4f25172c5078a35e387d785268e81eb39c6ead1b83a0497d",
     "sound/soc/soc-generic-dmaengine-pcm.c": "794bccb85fde6094cbd3b1dcaf8f3d5bce6ae5c4c342047658c2934525b6724c",
-    "sound/soc/soc-pcm.c": "5bae1c377b848238b5f75a18fcbb17a924064898cc9638489f866987db252586"
+    "sound/soc/soc-pcm.c": "5bae1c377b848238b5f75a18fcbb17a924064898cc9638489f866987db252586",
+    "drivers/power/supply/rk817_battery.c": "1288ee3d602033538b0dc1fb3ee3ecde0b5502052ce88b371e34cf120307b53d"
   },
   "scope": "Kernel driver source derives from the audio-v5 inputs. The product device tree now declares the HP_NO_MIC amplifier wiring. Archived semantic comparisons refer to the pre-property DTB sources; source hashes describe the current tree. Product peripheral support is summarized in the root README.md; build scope is documented in BUILD.md.",
   "product_config": {
     "path": "arch/arm64/configs/patchx_rk3568_product.config",
-    "sha256": "d4170c250b3c45dc1879fcd0cd25335213f71dc8e4cb312c1383d764345d0952",
+    "sha256": "dcc800b72ef05b8228323a37c205f3c54437adc053c268fbd3287b9e96a62489",
     "origin": "codec-intree build-v2 complete .config",
-    "difference_from_original": "CONFIG_SND_SOC_RK817=m (was not set)",
+    "difference_from_original": "CONFIG_SND_SOC_RK817=m and CONFIG_BATTERY_RK817=m (both originally not set)",
     "historical_use": "In-tree codec module built and loaded against the original audio-v5 Image; no complete Image was rebuilt for that module trial."
   },
   "product_device_tree": {
@@ -86,9 +87,9 @@
         "lines": 776
       },
       "rk3568-patchx-power.dtsi": {
-        "bytes": 11650,
-        "sha256": "03fb8f69c5fe83cde9628cfaff10a30221a6005449b251c89051f70bea659ee8",
-        "lines": 343
+        "bytes": 12566,
+        "sha256": "10d9c0e366af9326be6ac852cb579650501416bdcdc01a3886f982608d49f8cf",
+        "lines": 366
       },
       "rk3568-patchx-product.dts": {
         "bytes": 851,
@@ -110,5 +111,16 @@
     "image_sha256": "e2a5590fbde0a431a1a900c5fc9789d1e607af71a5300010e5431a2927ae3f61",
     "intree_rk817_module_sha256": "b862becedc3f0d9166ad9b49791e4745456aa91db9c26d0ed89dde8fe1a2439f",
     "purpose": "Identify the original runtime observations; binaries are not included."
+  },
+  "validation_tools": {
+    "tools/testing/selftests/power_supply/test_rk817_lifecycle.py": {
+      "sha256": "b8167ea7661d6b1f6a9cc4ff455c9ff0eeda496ab4818b3561e84504d604adf3",
+      "command": "python3 tools/testing/selftests/power_supply/test_rk817_lifecycle.py",
+      "scope": "Source lifecycle structure checks only; not an automatic kselftest target or runtime proof."
+    }
+  },
+  "deployment_tools_sha256": {
+    "tools/patchx/build-rk3568-patchx-initramfs.py": "a0ebfa50fe06bb17f66c36db634c89da8f403fa08371e53f0a8a4131b9d2bbfb",
+    "tools/patchx/build-rk3568-ram-boot.py": "1f84989a439a3f79e9156f424ab3a8b95fa208653390098d2725fda3e56010b1"
   }
 }

@@ -109,6 +109,8 @@ export ALSA_CONFIG_PATH="$PWD/deploy/patchx/alsa-rk3568.conf"
 | --- | --- |
 | `patchx.backlight_enabled` | `backlight_path` 是包含亮度属性的绝对 sysfs 目录 |
 | `patchx.display_enabled` | `display_device` 指向匹配的 720×720、32 位 framebuffer |
+| `patchx.display_rotation` | 画面方向，默认 `0`；屏幕倒装时设为 `180` |
+| `patchx.backlight_path` | 背光 sysfs 目录，例如 `/sys/class/backlight/backlight`；启用后，唤醒时会点亮关闭的背光 |
 | `patchx.camera_enabled` | `camera_program` 指向可执行包装脚本的绝对路径，不能直接指向 `aiq-finite`；按[包装入口说明](CAMERA.md#应用使用的是-wrapper-接口)配置参数与运行清单，`camera_work_dir` 使用绝对路径 |
 | `patchx.motor_port` | 默认留空。联调时填写已核实的绝对串口路径，按 [GD32F503 电机控制](../apps/patchx/README.md#gd32f503-电机控制) 核对固件、接线和 OTA 步骤 |
 | `patchx.mqtt_enabled` | broker、端口、TLS 与三个 MQTT 环境变量名称按自己的服务填写 |

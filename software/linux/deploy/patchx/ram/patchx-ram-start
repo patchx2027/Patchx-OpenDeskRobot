@@ -42,6 +42,9 @@ for path in dev proc sys; do
     mount --bind "/$path" "$root/$path"
     mounted="$path $mounted"
 done
+if test -f /rk817_battery.ko; then
+    insmod /rk817_battery.ko
+fi
 insmod /snd-soc-rk817.ko
 ip link set lo up
 export PATH=/usr/sbin:/usr/bin:/bin PYTHONUNBUFFERED=1

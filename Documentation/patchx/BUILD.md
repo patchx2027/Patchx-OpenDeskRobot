@@ -1,6 +1,6 @@
-# 构建内核、设备树与 codec 模块
+# 构建内核、设备树与 RK817 模块
 
-从仓库**根目录**执行以下命令。构建使用独立输出目录，生成 Image、PatchX 设备树和与该次内核匹配的 RK817 codec 模块。
+从仓库**根目录**执行以下命令。构建使用独立输出目录，生成 Image、PatchX 设备树和与该次内核匹配的 RK817 codec、battery 模块。
 
 ## 准备环境
 
@@ -8,7 +8,7 @@
 
 还需要 Python 3，并确保 `python` 命令可用：内核的 `scripts/gcc-wrapper.py` 使用 `/usr/bin/env python` 启动。Ubuntu 22.04 可安装 `python-is-python3`，使 `python` 指向 Python 3。
 
-[patchx_rk3568_product.config](../../arch/arm64/configs/patchx_rk3568_product.config) 是树内 codec 构建使用的完整 `.config`，其中 `CONFIG_SND_SOC_RK817=m`。它不是精简 defconfig，按下列步骤复制到输出目录。
+[patchx_rk3568_product.config](../../arch/arm64/configs/patchx_rk3568_product.config) 是树内 codec 构建使用的完整 `.config`，其中 `CONFIG_SND_SOC_RK817=m`、`CONFIG_BATTERY_RK817=m`。它不是精简 defconfig，按下列步骤复制到输出目录。
 
 本流程从本分支生成一组配套的内核产物。各外设的支持范围见 [产品首页](../../README.md#外设与接入)。
 
@@ -32,7 +32,7 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
     CROSS_COMPILE=aarch64-linux-gnu- Image modules || exit 1
 ```
 
-成功后，内核位于 `$OUT/arch/arm64/boot/Image`，RK817 codec 模块位于 `$OUT/sound/soc/codecs/snd-soc-rk817.ko`。`modules` 已通过树内 Kconfig/Makefile 入口构建 codec；保留同次输出目录中的最终 `.config` 和 `Module.symvers`。
+成功后，内核位于 `$OUT/arch/arm64/boot/Image`，RK817 codec 模块位于 `$OUT/sound/soc/codecs/snd-soc-rk817.ko`。battery 模块位于 `$OUT/drivers/power/supply/rk817_battery.ko`。`modules` 已通过树内 Kconfig/Makefile 入口构建两个模块；保留同次输出目录中的最终 `.config` 和 `Module.symvers`。
 
 ## 2. 构建 PatchX 设备树
 
@@ -54,6 +54,7 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
 | 内核 Image | `$OUT/arch/arm64/boot/Image` |
 | PatchX DTB | `$OUT/arch/arm64/boot/dts/rockchip/rk3568-patchx-product.dtb` |
 | RK817 codec 模块 | `$OUT/sound/soc/codecs/snd-soc-rk817.ko` |
+| RK817 battery 模块 | `$OUT/drivers/power/supply/rk817_battery.ko` |
 
 将最终配置、工具链版本和各产物校验值一起保存。Git 提交和工作树状态会影响内核 release 字符串，因此新分支构建出的 release 可能与原实机记录不同。使用同次构建的 Image 和模块，Image、模块和符号表应来自同一轮构建。
 
@@ -86,3 +87,33 @@ make -C "$KERNEL_SRC" O="$OUT" ARCH=arm64 \
 `chosen` 中使用 `rdinit=/init`，需要配套提供包含 `/init` 的 initramfs，并由它完成所需文件系统挂载和 rootfs 启动。Image、DTB 和模块可交给 RAM 启动包组装入口。
 
 生成的 DTB 对应 pre-overlay 基树。若启动链还会应用 overlay，应核对其内容和应用次数；屏幕、音频等已写入这份源码的配置，不要再通过同内容的合成 overlay 重复应用。
+
+## 电量读取与生命周期检查
+
+产品设备树的 `rk817,battery` 节点与 battery 模块提供 Linux `power_supply` 属性。
+PatchX 的 `apps/patchx/power.py` 只读这些属性，结果位于 `/api/status` 的
+`patchx.power`，包括电池百分比、电压、电流、驱动报告的温度与状态。
+电压、电流分别转换为 V、A；电流符号沿用驱动，充电判断只来自 `status`，
+不能仅凭正电流推断充电状态。未提供的充电器属性保持不可用，不补造读数。
+
+读取器不设置充电电流、电压或充电模式。启用计量驱动也不等于启用了独立的
+BQ25703 充电控制器或 Type-C 控制器。SOC 百分比仍需结合电池与计量参数核准；
+温度是驱动报告值，不能当作已校准的独立温度测量。
+
+使用同次树内构建的 Image、DTB 和模块。可检查模块身份：
+
+```sh
+modinfo -F vermagic "$OUT/drivers/power/supply/rk817_battery.ko"
+modinfo -F intree "$OUT/drivers/power/supply/rk817_battery.ko"
+```
+
+`intree` 应为 `Y`。不要靠改写模块信息或清除内核 taint 绕过不匹配。
+
+生命周期源码检查从仓库根目录直接运行：
+
+```sh
+python3 tools/testing/selftests/power_supply/test_rk817_lifecycle.py
+```
+
+该检查验证资源归属、初始化顺序和异步清理结构，尚未接入 kselftest 的自动目标。
+它不替代加载/卸载、失败注入和并发路径的板端验证。

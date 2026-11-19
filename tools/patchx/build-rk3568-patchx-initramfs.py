@@ -83,6 +83,8 @@ def build(args):
         shutil.copyfile(config, product / "ram.json")
         shutil.copyfile(DEPLOY / "alsa-rk3568.conf", product / "deploy/patchx/alsa-rk3568.conf")
         subprocess.run([args.strip, "--strip-debug", "-o", root / "snd-soc-rk817.ko", args.codec], check=True)
+        if args.battery is not None:
+            subprocess.run([args.strip, "--strip-debug", "-o", root / "rk817_battery.ko", args.battery], check=True)
         files = [b".", *(bytes(p.relative_to(root)) for p in sorted(root.rglob("*")))]
         archive = subprocess.run(
             ["cpio", "--quiet", "--null", "-o", "-H", "newc", "--owner", "0:0", "--reproducible"],
@@ -96,6 +98,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("busybox", "codec", "runtime-archive", "output"):
         parser.add_argument("--" + name, required=True, type=Path)
+    parser.add_argument("--battery", type=Path, help="Optional RK817 battery module from the same kernel build")
     parser.add_argument("--cache-path", required=True, help="Board path relative to /cache")
     parser.add_argument("--config", type=Path, help="Local PatchX JSON; default is demo")
     parser.add_argument("--strip", default="aarch64-linux-gnu-strip")
